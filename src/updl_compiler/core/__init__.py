@@ -29,7 +29,6 @@ from .quantizer import (
     set_udl_shift_only_mode,
     calculate_weight_params,
     calculate_bias_params,
-    calculate_udl_power_of_2_scale,
 )
 
 from .fuser import (
@@ -44,8 +43,12 @@ from .serializer import (
     serialize_uph5_to_c_array,
 )
 
-from .quantization_analyzer import (
-    QuantizationAnalyzer,
+from .quantization_analyzer import QuantizationAnalyzer
+
+from .quantization import (
+    QuantizationConfig,
+    UDLQuantizer,
+    calculate_udl_power_of_2_scale,
     calculate_symmetric_quantization_params,
 )
 
@@ -91,8 +94,8 @@ __all__ = [
     "serialize_uph5_to_c_array",
 
     # Quantization
-    "QuantizationAnalyzer", "calculate_symmetric_quantization_params",
-    "calculate_udl_power_of_2_scale",
+    "QuantizationAnalyzer", "QuantizationConfig", "UDLQuantizer",
+    "calculate_symmetric_quantization_params", "calculate_udl_power_of_2_scale",
 
     # Preprocessors
     "DataPreprocessor",
