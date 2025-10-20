@@ -26,7 +26,7 @@ def get_fusion_groups(fusion_json_file):
         )
         return {}
     except Exception as e:
-        log_warn(f"Error loading fusion file {fusion_json_file}: {e}")
+        log_warn(f"Layer Fuser: Cannot load fusion configuration from {fusion_json_file} - {e}. Proceeding without layer fusion optimization.")
         return {}
 
 
@@ -80,7 +80,7 @@ def apply_fusion_to_model(model, fusion_groups):
                         skip_layers.add(layer_index)
                 else:
                     log_warn(
-                        f"Layer type mismatch at index {layer_index}: expected {layer_type}, got {expected_type}"
+                        f"Layer Fuser: Model layer mismatch at index {layer_index} - fusion config expects {layer_type} but model has {expected_type}. Skipping this fusion group."
                     )
 
         # Perform fusion if we have the right layers
@@ -292,7 +292,7 @@ def fuse_to_uph5_layer(model, fusion_groups):
                 primary_layer_info = layer_info
 
         if primary_layer_info is None or primary_layer_idx >= len(model.layers):
-            log_warn(f"Could not find valid primary layer in group {group_name}")
+            log_warn(f"Layer Fuser: Invalid primary layer configuration in fusion group '{group_name}' - layer index {primary_layer_idx} not found in model. Skipping fusion group.")
             continue
 
         primary_layer = model.layers[primary_layer_idx]
@@ -372,7 +372,7 @@ def fuse_to_uph5_layer(model, fusion_groups):
                         bias_shape = original_weights[0].shape[-1]  # Units for Dense
                     fused_layer["bias"] = np.zeros(bias_shape, dtype=np.float32)
         except Exception as e:
-            log_warn(f"Could not get weights from primary layer: {e}")
+            log_warn(f"Layer Fuser: Cannot extract weights from primary layer '{primary_layer.name}' in group '{group_name}' - {e}. Fusion may be incomplete.")
 
         # Process other layers in the group for fusion
         batch_norm_layer = None
@@ -483,11 +483,7 @@ def combine_fused_data_step5(fusable_data, fused_groups):
     Input: fusable_data (with 'input' section), fused_groups
     Output: fused_data with 'input' and 'layers' sections
     """
-    log_info("Step 5: Combining fusable_data input + fused_groups into fused_data")
-
     fused_data = {"input": fusable_data.get("input", {}), "layers": fused_groups}
-
-    log_info(f"Created fused_data with {len(fused_groups)} fused layers")
     log_debug(f"Input data keys: {list(fused_data['input'].keys())}")
     log_debug(f"Fused layer names: {list(fused_data['layers'].keys())}")
 

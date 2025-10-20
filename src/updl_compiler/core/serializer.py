@@ -35,7 +35,6 @@ def serialize_uph5_metadata_to_json(fused_data, output_file):
     Input: fused_data (contains 'input' and 'layers' sections)
     Output: JSON metadata file without weights/bias data
     """
-    log_info(f"Step 6: Serializing UPH5 metadata from fused_data to {output_file}")
 
     # Extract input information
     input_data = fused_data.get("input", {})
@@ -88,7 +87,7 @@ def serialize_uph5_metadata_to_json(fused_data, output_file):
         log_info(f"UPH5 metadata written to {output_file}")
         log_info(f"Metadata contains {len(metadata['layers'])} layer descriptions")
     except Exception as e:
-        log_error(f"Failed to write metadata to {output_file}: {e}")
+        log_error(f"Serializer: Cannot write UPH5 metadata to {output_file} - {e}. Check file permissions and disk space.")
         raise
 
 def serialize_uph5_weight_to_json(fused_data, output_file):
@@ -211,7 +210,7 @@ def serialize_uph5_weight_to_json(fused_data, output_file):
         with open(output_file, "w") as f:
             json.dump(weights_debug, f, indent=2)
     except Exception as e:
-        log_error(f"Failed to write weights debug data to {output_file}: {e}")
+        log_error(f"Serializer: Cannot write weights debug data to {output_file} - {e}. Check file permissions and disk space.")
         raise
 
 
@@ -223,7 +222,6 @@ def serialize_uph5_to_binary(
     Input: fused_data (contains 'input' and 'layers' sections)
     Output: Binary UPH5 file
     """
-    log_info(f"Step 6: Serializing UPH5 binary from fused_data to {output_file}")
 
     input_data = fused_data.get("input", {})
     layers_data = fused_data.get("layers", {})
@@ -493,7 +491,6 @@ def serialize_uph5_to_c_array(fused_data, model_name, description="no_descriptio
     """Step 6: Convert fused_data to C array format"""
     import tempfile
 
-    log_info(f"Step 6: Converting fused_data to C array format")
 
     # Generate temp binary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".uph5") as tmp_file:

@@ -146,7 +146,7 @@ def main():
         log_info("=== Conversion completed successfully! ===")
 
     except Exception as e:
-        log_error(f"Conversion failed: {e}")
+        log_error(f"CLI: Model compilation failed - {e}. Check model path, preprocessor configuration, and dataset availability.")
         sys.exit(1)
 
 

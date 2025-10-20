@@ -42,16 +42,13 @@ def main():
         }
 
         # Compile model
-        result = compile_model(
+        _ = compile_model(
             model=model_path,
             preprocessor=preprocessor,
             calibration_data=calibration_data,
             model_name="kws_uph5_model",
             description="no_description"
         )
-
-        print(f"✓ Compiled {result['model_name']} ({result['file_size']} bytes)")
-        print(f"✓ Generated uph5/{result['model_name']}_int16.c/.h")
 
     except Exception as e:
         print(f"Error: {e}")

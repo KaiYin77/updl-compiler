@@ -36,31 +36,31 @@ def get_log_level():
     return current_log_level
 
 
-def log_error(message, category="GENERAL"):
+def log_error(message):
     """Log error message in red"""
     if current_log_level >= LOG_LEVEL_ERROR:
-        print(f"{RED}[ERROR] [{category}] {message}{RESET}")
+        print(f"{RED}[ERROR] {message}{RESET}")
 
 
-def log_warn(message, category="GENERAL"):
+def log_warn(message):
     """Log warning message in yellow"""
     if current_log_level >= LOG_LEVEL_WARN:
-        print(f"{YELLOW}[WARN] [{category}] {message}{RESET}")
+        print(f"{YELLOW}[WARN] {message}{RESET}")
 
 
-def log_info(message, category="GENERAL"):
+def log_info(message):
     """Log info message in white"""
     if current_log_level >= LOG_LEVEL_INFO:
-        print(f"{WHITE}[INFO] [{category}] {message}{RESET}")
+        print(f"{WHITE}[INFO] {message}{RESET}")
 
 
-def log_debug(message, category="GENERAL"):
+def log_debug(message):
     """Log debug message in blue"""
     if current_log_level >= LOG_LEVEL_DEBUG:
-        print(f"{BLUE}[DEBUG] [{category}] {message}{RESET}")
+        print(f"{BLUE}[DEBUG] {message}{RESET}")
 
 
-def log_trace(message, category="GENERAL"):
+def log_trace(message):
     """Log trace message in cyan"""
     if current_log_level >= LOG_LEVEL_TRACE:
-        print(f"{CYAN}[TRACE] [{category}] {message}{RESET}")
+        print(f"{CYAN}[TRACE] {message}{RESET}")

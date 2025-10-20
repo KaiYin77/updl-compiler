@@ -120,7 +120,7 @@ class QuantizationAnalyzer:
         # Process samples in batches to manage memory
         num_batches = (len(calibration_data) + self.batch_size - 1) // self.batch_size
 
-        for batch_idx in tqdm(range(num_batches), desc="Processing calibration batches"):
+        for batch_idx in tqdm(range(num_batches), desc="Processing calibration in batches"):
             start_idx = batch_idx * self.batch_size
             end_idx = min((batch_idx + 1) * self.batch_size, len(calibration_data))
             batch_samples = calibration_data[start_idx:end_idx]
@@ -143,7 +143,7 @@ class QuantizationAnalyzer:
                     input_maxs.append(np.max(input_flat))
 
                 except Exception as e:
-                    log_error(f"Error processing sample: {e}")
+                    log_error(f"Quantization Analyzer: Failed to preprocess calibration sample {sample_idx + 1} - {e}. This sample will be skipped.")
                     continue
 
             if not batch_features:
@@ -172,7 +172,7 @@ class QuantizationAnalyzer:
                         layer_stats[layer_name]['maxs'].append(np.max(output_flat))
 
             except Exception as e:
-                log_error(f"Error processing batch: {e}")
+                log_error(f"Quantization Analyzer: Failed to run model inference on calibration batch {batch_idx + 1} - {e}. This batch will be skipped.")
                 continue
 
         # Calculate global input quantization parameters

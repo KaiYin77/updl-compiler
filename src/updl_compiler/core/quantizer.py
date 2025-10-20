@@ -5,7 +5,7 @@
 import os
 import json
 import math
-from .logger import log_debug, log_info
+from .logger import log_debug, log_info, log_warn
 
 # Global variable to store loaded quantization parameters
 _quantization_params = None
@@ -244,7 +244,7 @@ def calculate_udl_power_of_2_scale(original_scale, max_shift=15, max_abs_value=N
     
     # If both would overflow, use original scale and warn
     if floor_overflow and ceil_overflow:
-        log_info(f"WARNING: Both power-of-2 approximations would cause int16 overflow. Using original scale.")
+        log_warn(f"Quantizer: Both UDL power-of-2 approximations would cause int16 overflow. Using original scale {original_scale:.8f}. Consider reducing input scale range.")
         return original_scale, 0, 0.0
         
     # If one would overflow, use the other
@@ -329,9 +329,9 @@ def calculate_params_symmetric(min_val, max_val):
         
         # Warn if approximation error is significant (>10% error)
         if absolute_relative_error > 0.1:
-            log_info(f"WARNING: Significant power-of-2 approximation error: "
-                    f"{original_scale:.8f} -> {power_of_2_scale:.8f} "
-                    f"(abs_rel_error={absolute_relative_error:.6f})")
+            log_warn(f"Quantizer: Significant UDL power-of-2 approximation error - "
+                    f"original scale {original_scale:.8f} approximated as {power_of_2_scale:.8f} "
+                    f"with {absolute_relative_error:.1%} error. This may impact model accuracy.")
         
         scale = power_of_2_scale
 

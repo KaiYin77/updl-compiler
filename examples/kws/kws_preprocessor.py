@@ -182,7 +182,7 @@ class KWSPreprocessor(DataPreprocessor):
             log_info(f"Dataset loaded: {ds_info.splits['train'].num_examples} training samples")
 
         except Exception as e:
-            log_error(f"Error loading dataset: {e}")
+            log_error(f"KWS Preprocessor: Cannot load speech_commands dataset from {dataset_dir} - {e}. Check dataset path and internet connection for downloading.")
             return []
 
         # Load calibration indices if provided
@@ -197,7 +197,7 @@ class KWSPreprocessor(DataPreprocessor):
                             calibration_indices.append(int(line))
                 log_info(f"Loaded {len(calibration_indices)} calibration indices from {indices_file}")
             except Exception as e:
-                log_error(f"Error loading calibration indices: {e}")
+                log_error(f"KWS Preprocessor: Cannot read calibration indices from {indices_file} - {e}. Check file format and permissions.")
 
         # Convert dataset to list and select samples
         if calibration_indices:
@@ -210,7 +210,7 @@ class KWSPreprocessor(DataPreprocessor):
                 if idx < len(ds_list):
                     calibration_samples.append(ds_list[idx])
                 else:
-                    log_error(f"Index {idx} is out of range, skipping")
+                    log_error(f"KWS Preprocessor: Calibration index {idx} exceeds dataset size ({len(ds_list)} samples). This index will be skipped.")
         else:
             # Use first N samples (default 120 if count is None)
             samples_count = count if count is not None else 120

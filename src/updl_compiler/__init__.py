@@ -61,19 +61,16 @@ def compile_model(
         validate_layer_configuration()
 
         # Step 1: Load model
-        log_info("Step 1: Loading model...")
+        log_info(f"Model Loader: Loading {model}")
         loaded_model = load_model(model)
 
         # Step 2: Run quantization analysis
-        log_info("Step 2: Performing quantization analysis...")
-
-        # Load calibration data using preprocessor
         if calibration_data:
             calibration_samples = preprocessor.load_calibration_data(calibration_data)
         else:
-            raise ValueError("calibration_data is required for quantization analysis")
+            raise ValueError("Quantization Analyzer: calibration_data is required for quantization analysis")
 
-        # Create quantization analyzer
+        log_info(f"Quantization Analyzer: Starting analysis with {len(calibration_samples)} samples")
         analyzer = QuantizationAnalyzer(preprocessor=preprocessor)
 
         # Generate quantization parameters and save to .updlc_cache
@@ -89,14 +86,11 @@ def compile_model(
         )
 
         # Step 3: Continue with compilation using generated parameters
-        log_info("Step 3: Compiling model with quantization parameters...")
-
-        # Initialize quantization parameters
         if not initialize_params(quant_params_file, udl_mode=True):
-            raise RuntimeError(f"Failed to load generated quantization parameters from {quant_params_file}")
+            raise RuntimeError(f"Parameter Initializer: Failed to load quantization parameters from {quant_params_file}")
 
         # Create fusion data
-        log_info("Processing layer fusion...")
+        log_info(f"Layer Fuser: Processing {len(loaded_model.layers)} layers")
         base_name = os.path.splitext(os.path.basename(quant_params_file))[0]
         fusion_json = os.path.join(output_dir, ".updlc_cache", f"fusable_{base_name}.json")
         fusable_data = fuse_layers_from_json(quant_params_file, fusion_json)
@@ -107,7 +101,7 @@ def compile_model(
         fused_data = combine_fused_data_step5(fusable_data, fused_layers)
 
         # Generate outputs
-        log_info("Serializing outputs...")
+        log_info(f"Serializer: Generating C arrays for {model_name}")
 
         # Metadata JSON
         metadata_json = os.path.join(output_dir, ".updlc_cache", f"uph5_metadata_{base_name}.json")
@@ -131,12 +125,12 @@ def compile_model(
         result["quantization_params"] = quant_params_file
         result["calibration_samples"] = len(calibration_samples)
 
-        log_info(f"Compilation completed successfully!")
+        log_info(f"Compilation: Successfully generated {file_size} bytes")
         return result
 
     except Exception as e:
         from .core.logger import log_error
-        log_error(f"Compilation failed: {e}")
+        log_error(f"Compilation: Failed during model compilation - {e}")
         raise
 
 

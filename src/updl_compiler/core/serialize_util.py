@@ -22,8 +22,8 @@ def write_string(f, string, length=STRING_LENGTH, debug=False):
 
     # Ensure exactly the right length
     if len(result) != length:
-        log_error(f"String padding error: expected {length} bytes, got {len(result)}")
-        raise ValueError(f"String length mismatch")
+        log_error(f"Serializer: String padding failed for '{string_trimmed}' - expected {length} bytes but generated {len(result)} bytes. This indicates a binary format specification error.")
+        raise ValueError(f"Binary format error: string padding length mismatch")
 
     # Write to file
     f.write(result)
@@ -89,7 +89,7 @@ def write_shape(f, shape, dim_count=4, debug=False):
 def write_enum(f, string_value, enum_list, debug=False):
     """Write a type enum (lookup string in list)"""
     if string_value not in enum_list:
-        log_error(f"Enum value '{string_value}' not found in list {enum_list}")
+        log_error(f"Serializer: Unknown layer type '{string_value}' encountered during serialization. Valid types are: {enum_list}. This indicates an unsupported layer type.")
         enum_value = -1
     else:
         enum_value = enum_list.index(string_value)
