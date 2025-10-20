@@ -18,32 +18,27 @@ from .core.quantizer import initialize_params, set_udl_shift_only_mode
 from .core.fuser import fuse_layers_from_json, fuse_to_uph5_layer, combine_fused_data_step5
 from .core.serializer import serialize_uph5_to_c_array, serialize_uph5_metadata_to_json
 from .core.config import validate_layer_configuration
+from .core.quantization_analyzer import QuantizationAnalyzer
+from .core.preprocessors import DataPreprocessor
 
 def compile_model(
-    model: str = None,
-    quant_config: str = None,
-    # Legacy parameters (for backward compatibility)
-    input_path: str = None,
-    quantization_params: str = None,
+    model: str,
+    preprocessor: DataPreprocessor,
+    calibration_data=None,
     model_name: str = None,
     description: str = "no_description",
     output_dir: str = None,
-    udl_mode: bool = True  # Always enabled by default
 ):
     """
-    Main API function to compile a Keras model to UPH5 format.
+    Compile a model with automatic quantization analysis (streamlined workflow)
 
-    Simplified interface:
-        model: Path to model file (e.g., "tf_model/kws_model_split.h5")
-        quant_config: Path to quantization config (e.g., "quant_config/kws_quantize_int16_ref.json")
-
-    Legacy interface (backward compatibility):
-        input_path: Path to input HDF5 model file
-        quantization_params: Path to JSON file with quantization parameters
-        model_name: Name for the generated model (max 16 chars)
-        description: Model description (max 32 chars)
+    Args:
+        model: Path to model file or directory
+        preprocessor: DataPreprocessor instance for the specific model type
+        calibration_data: Calibration data source (dataset path, data directory, or sample list)
+        model_name: Name for the generated model (auto-extracted if not provided)
+        description: Model description
         output_dir: Directory to write output artifacts
-        udl_mode: Enable UDL shift-only quantization mode (always True)
 
     Returns:
         dict: Compilation results with file paths and sizes
@@ -51,18 +46,12 @@ def compile_model(
     import os
     from .core.logger import log_info, set_log_level, LOG_LEVEL_INFO
 
-    # Handle simplified interface
-    if model is not None:
-        input_path = model
-        # Extract model name from filename (e.g., "kws_model_split.h5" -> "kws_model_split")
-        model_name = os.path.splitext(os.path.basename(model))[0]
-
-    if quant_config is not None:
-        quantization_params = quant_config
-
-    # Set defaults for simplified interface
+    # Set defaults
     if output_dir is None:
-        output_dir = "."  # Current directory (will create uph5/ subdirectory)
+        output_dir = "."
+
+    if model_name is None:
+        model_name = os.path.splitext(os.path.basename(model))[0]
 
     # Set up logging
     set_log_level(LOG_LEVEL_INFO)
@@ -71,29 +60,54 @@ def compile_model(
         # Validate configuration
         validate_layer_configuration()
 
-        # Load model
-        log_info("Loading Keras model...")
-        model = load_model(input_path)
+        # Step 1: Load model
+        log_info("Step 1: Loading model...")
+        loaded_model = load_model(model)
+
+        # Step 2: Run quantization analysis
+        log_info("Step 2: Performing quantization analysis...")
+
+        # Load calibration data using preprocessor
+        if calibration_data:
+            calibration_samples = preprocessor.load_calibration_data(calibration_data)
+        else:
+            raise ValueError("calibration_data is required for quantization analysis")
+
+        # Create quantization analyzer
+        analyzer = QuantizationAnalyzer(preprocessor=preprocessor)
+
+        # Generate quantization parameters and save to .updlc_cache
+        cache_dir = os.path.join(output_dir, ".updlc_cache")
+        os.makedirs(cache_dir, exist_ok=True)
+
+        quant_params_file = os.path.join(cache_dir, f"{model_name}_quantize_params.json")
+        quantization_params = analyzer.analyze_model_quantization(
+            loaded_model,
+            calibration_samples,
+            quant_params_file,
+            udl_mode=True
+        )
+
+        # Step 3: Continue with compilation using generated parameters
+        log_info("Step 3: Compiling model with quantization parameters...")
 
         # Initialize quantization parameters
-        log_info("Loading quantization parameters...")
-        if not initialize_params(quantization_params, udl_mode=udl_mode):
-            raise RuntimeError(f"Failed to load quantization parameters from {quantization_params}")
+        if not initialize_params(quant_params_file, udl_mode=True):
+            raise RuntimeError(f"Failed to load generated quantization parameters from {quant_params_file}")
 
         # Create fusion data
         log_info("Processing layer fusion...")
-        base_name = os.path.splitext(os.path.basename(quantization_params))[0]
-        fusion_json = os.path.join(output_dir, f"fusable_{base_name}.json")
-        fusable_data = fuse_layers_from_json(quantization_params, fusion_json)
+        base_name = os.path.splitext(os.path.basename(quant_params_file))[0]
+        fusion_json = os.path.join(output_dir, ".updlc_cache", f"fusable_{base_name}.json")
+        fusable_data = fuse_layers_from_json(quant_params_file, fusion_json)
         fusable_layers = fusable_data["layers"]
 
         # Process fusion
-        fused_layers = fuse_to_uph5_layer(model, fusable_layers)
+        fused_layers = fuse_to_uph5_layer(loaded_model, fusable_layers)
         fused_data = combine_fused_data_step5(fusable_data, fused_layers)
 
         # Generate outputs
         log_info("Serializing outputs...")
-        os.makedirs(output_dir, exist_ok=True)
 
         # Metadata JSON
         metadata_json = os.path.join(output_dir, ".updlc_cache", f"uph5_metadata_{base_name}.json")
@@ -105,9 +119,7 @@ def compile_model(
         os.makedirs(uph5_dir, exist_ok=True)
         file_size = serialize_uph5_to_c_array(fused_data, model_name, description=description, output_dir=uph5_dir)
 
-        log_info(f"Compilation completed successfully! Generated {file_size} bytes")
-
-        return {
+        result = {
             "model_name": model_name,
             "file_size": file_size,
             "metadata_json": metadata_json,
@@ -115,20 +127,21 @@ def compile_model(
             "output_dir": output_dir
         }
 
+        # Add quantization info to result
+        result["quantization_params"] = quant_params_file
+        result["calibration_samples"] = len(calibration_samples)
+
+        log_info(f"Compilation completed successfully!")
+        return result
+
     except Exception as e:
         from .core.logger import log_error
         log_error(f"Compilation failed: {e}")
         raise
 
+
 __all__ = [
     "compile_model",
-    "load_model",
-    "initialize_params",
-    "set_udl_shift_only_mode",
-    "fuse_layers_from_json",
-    "fuse_to_uph5_layer",
-    "combine_fused_data_step5",
-    "serialize_uph5_to_c_array",
-    "serialize_uph5_metadata_to_json",
-    "validate_layer_configuration",
+    "DataPreprocessor",
+    "QuantizationAnalyzer",
 ]

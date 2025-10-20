@@ -29,6 +29,7 @@ from .quantizer import (
     set_udl_shift_only_mode,
     calculate_weight_params,
     calculate_bias_params,
+    calculate_udl_power_of_2_scale,
 )
 
 from .fuser import (
@@ -41,6 +42,16 @@ from .serializer import (
     serialize_uph5_metadata_to_json,
     serialize_uph5_weight_to_json,
     serialize_uph5_to_c_array,
+)
+
+from .quantization_analyzer import (
+    QuantizationAnalyzer,
+    calculate_symmetric_quantization_params,
+)
+
+
+from .preprocessors import (
+    DataPreprocessor,
 )
 
 from .logger import (
@@ -70,6 +81,7 @@ __all__ = [
     # Quantizer
     "initialize_params", "set_udl_shift_only_mode",
     "calculate_weight_params", "calculate_bias_params",
+    "calculate_udl_power_of_2_scale",
 
     # Fuser
     "fuse_layers_from_json", "fuse_to_uph5_layer", "combine_fused_data_step5",
@@ -77,6 +89,13 @@ __all__ = [
     # Serializer
     "serialize_uph5_metadata_to_json", "serialize_uph5_weight_to_json",
     "serialize_uph5_to_c_array",
+
+    # Quantization
+    "QuantizationAnalyzer", "calculate_symmetric_quantization_params",
+    "calculate_udl_power_of_2_scale",
+
+    # Preprocessors
+    "DataPreprocessor",
 
     # Logger
     "LOG_LEVEL_OFF", "LOG_LEVEL_ERROR", "LOG_LEVEL_WARN", "LOG_LEVEL_INFO",

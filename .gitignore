@@ -10,5 +10,4 @@ wheels/
 # Virtual environments
 .venv
 
-examples/*/tf_model/
-examples/*/.updlc_cache
+examples/*/.updlc_cache/

@@ -16,23 +16,24 @@ from ..core.logger import (
     log_info,
     log_error,
 )
-from ..core.config import validate_layer_configuration
-from ..core.loader import load_model
-from ..core.fuser import (
-    fuse_layers_from_json,
-    fuse_to_uph5_layer,
-    combine_fused_data_step5,
-)
-from ..core.quantizer import initialize_params
-from ..core.serializer import serialize_uph5_metadata_to_json, serialize_uph5_weight_to_json, serialize_uph5_to_c_array
 
 
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description="Convert HDF5 model to C array format for embedded deployment"
+        description="UPDL Compiler - Convert ML models to UPH5 format with automatic quantization"
     )
-    parser.add_argument("--model", required=True, help="Input HDF5 file path")
+    parser.add_argument("--model", required=True, help="Path to model file or directory")
+    parser.add_argument(
+        "--preprocessor",
+        required=True,
+        help="Preprocessor type (e.g., 'kws') or path to custom preprocessor"
+    )
+    parser.add_argument(
+        "--dataset",
+        required=True,
+        help="Path to dataset directory or calibration data"
+    )
     parser.add_argument(
         "--description",
         default="no_description",
@@ -44,9 +45,15 @@ def parse_args():
         help="Model name (auto-extracted from filename if not provided)"
     )
     parser.add_argument(
-        "--quant-config",
-        required=True,
-        help="JSON file with quantization parameters",
+        "--calibration-samples",
+        type=int,
+        default=120,
+        help="Number of calibration samples to use for quantization"
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=".",
+        help="Output directory (default: current directory)"
     )
     parser.add_argument(
         "--log-level",
@@ -57,8 +64,40 @@ def parse_args():
     return parser.parse_args()
 
 
+def load_preprocessor(preprocessor_arg):
+    """Load preprocessor based on argument"""
+    if preprocessor_arg == "kws":
+        # Import KWS preprocessor from examples
+        examples_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "examples", "kws")
+        sys.path.insert(0, examples_dir)
+        try:
+            from kws_preprocessor import KWSPreprocessor
+            return KWSPreprocessor()
+        except ImportError as e:
+            raise RuntimeError(f"Failed to load KWS preprocessor: {e}")
+    else:
+        # Try to import custom preprocessor
+        try:
+            if os.path.exists(preprocessor_arg):
+                # Load from file path
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("custom_preprocessor", preprocessor_arg)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                # Assume the module has a main preprocessor class
+                for attr_name in dir(module):
+                    attr = getattr(module, attr_name)
+                    if hasattr(attr, "__bases__") and any("DataPreprocessor" in str(base) for base in attr.__bases__):
+                        return attr()
+                raise RuntimeError("No DataPreprocessor subclass found in custom preprocessor file")
+            else:
+                raise RuntimeError(f"Preprocessor file not found: {preprocessor_arg}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load custom preprocessor: {e}")
+
+
 def main():
-    """Main entry point - streamlined workflow"""
+    """Main entry point - streamlined workflow with automatic quantization"""
     args = parse_args()
 
     # Set log level
@@ -73,74 +112,37 @@ def main():
     set_log_level(log_level_map[args.log_level])
 
     try:
-        # === STREAMLINED WORKFLOW ===
-        log_info("=== UPDL Model Conversion Pipeline ===")
+        log_info("=== UPDL Model Compilation with Automatic Quantization ===")
 
-        # 0. Validate configuration
-        validate_layer_configuration()
+        # Load preprocessor
+        log_info(f"Loading preprocessor: {args.preprocessor}")
+        preprocessor = load_preprocessor(args.preprocessor)
 
-        # 1. Load model using updl_loader
-        log_info("Step 1: Loading keras model...")
-        model = load_model(args.model)
+        # Import compile_model from main package
+        from .. import compile_model
 
         # Auto-extract model name if not provided
         if args.model_name is None:
             args.model_name = os.path.splitext(os.path.basename(args.model))[0]
             log_info(f"Auto-extracted model name: {args.model_name}")
 
-        # 2. Load quantization parameters (UDL mode always enabled)
-        log_info(
-            f"Step 2: Loading pre-computed quantization parameters from {args.quant_config}"
-        )
-        log_info("UDL shift-only mode ENABLED - All scales will be converted to power-of-2 values")
-
-        if not initialize_params(args.quant_config, udl_mode=True):
-            raise RuntimeError(
-                f"Failed to load quantization parameters from {args.quant_config}"
-            )
-
-        # 3. Create fusion groups JSON → fusion_data
-        log_info("Step 3: Grouping fusable layers...")
-        # Generate fusion filename based on quantization params filename
-        base_name = os.path.splitext(os.path.basename(args.quant_config))[0]
-        cache_dir = "./.updlc_cache"
-        os.makedirs(cache_dir, exist_ok=True)
-        fusion_json = os.path.join(cache_dir, f"fusable_{base_name}.json")
-        fusable_data = fuse_layers_from_json(args.quant_config, fusion_json)
-        fusable_layers = fusable_data["layers"]
-
-        # 4. Focus on fusion to uph5 layer
-        log_info("Step 4: Processing fusable_layers into uph5 layer...")
-        fused_layers = fuse_to_uph5_layer(model, fusable_layers)
-        log_info(
-            f"Fusion processing complete: {len(fused_layers)} fused layers created"
+        # Compile model with automatic quantization
+        result = compile_model(
+            model=args.model,
+            preprocessor=preprocessor,
+            calibration_data=args.dataset,
+            calibration_count=args.calibration_samples,
+            model_name=args.model_name,
+            description=args.description,
+            output_dir=args.output_dir
         )
 
-        # 5. Combine fusable_data['input'] + fused_layers → fused_data
-        log_info("Step 5: Combining data structures...")
-        fused_data = combine_fused_data_step5(fusable_data, fused_layers)
-        log_info("Combined fused_data structure created")
-
-        # 6. Focus on serialization (clean separation)
-        log_info("Step 6a: Serializing metadata to json...")
-        # Save cache files to .updlc_cache directory
-        uph5_json = os.path.join(cache_dir, f"uph5_metadata_{base_name}.json")
-        serialize_uph5_metadata_to_json(fused_data, uph5_json)
-
-        log_info("Step 6b: Serializing CHW-optimized weights to json...")
-        weights_debug_json = os.path.join(cache_dir, f"uph5_weights_{base_name}.json")
-        serialize_uph5_weight_to_json(fused_data, weights_debug_json)
-
-        log_info("Step 6c: Serializing to C array...")
-        # Save C array files to uph5 directory
-        output_dir = "uph5"
-        os.makedirs(output_dir, exist_ok=True)
-        file_size = serialize_uph5_to_c_array(
-            fused_data, args.model_name, description=args.description, output_dir=output_dir
-        )
-        log_info(f"Generated C array files in {output_dir}/")
-
-        log_info(f"File size: {file_size} bytes")
+        log_info("=== Compilation Results ===")
+        log_info(f"Model name: {result['model_name']}")
+        log_info(f"File size: {result['file_size']} bytes")
+        log_info(f"Quantization parameters: {result['quantization_params']}")
+        log_info(f"Calibration samples: {result['calibration_samples']}")
+        log_info(f"Generated files in: {result['uph5_dir']}")
         log_info("=== Conversion completed successfully! ===")
 
     except Exception as e:
