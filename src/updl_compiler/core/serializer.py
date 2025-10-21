@@ -7,12 +7,13 @@ from .logger import (
     log_error,
     log_info,
 )
-from .config import (
+from .formats.uph5_format import (
     DESCRIPTION_LENGTH,
     DTYPE_LIST,
     LTYPE_LIST,
     PTYPE_LIST,
     ATYPE_LIST,
+    UPH5Compatibility,
 )
 from .serialize_util import (
     write_string,
@@ -252,7 +253,7 @@ def serialize_uph5_to_binary(
 
         # Data type
         write_tag(f, "dtype", debug=False)
-        dtype = "int16_t"
+        dtype = UPH5Compatibility.DEFAULT_DTYPE
         write_string(f, dtype, debug=False)
         write_enum(f, dtype, DTYPE_LIST, debug=False)
 
@@ -506,10 +507,10 @@ def serialize_uph5_to_c_array(fused_data, model_name, description="no_descriptio
         with open(tmp_path, "rb") as f:
             data_bytes = f.read()
 
-        # Generate C array files
+        # Generate C array files using UPH5 compatibility specs
         base_filename = f"{model_name}_int16"
-        h_file_name = f"{base_filename}.h"
-        c_file_name = f"{base_filename}.c"
+        h_file_name = f"{base_filename}{UPH5Compatibility.HEADER_EXTENSION}"
+        c_file_name = f"{base_filename}{UPH5Compatibility.SOURCE_EXTENSION}"
 
         # Output paths - now configurable
         h_file_path = os.path.join(output_dir, h_file_name)
@@ -525,7 +526,7 @@ def serialize_uph5_to_c_array(fused_data, model_name, description="no_descriptio
             f.write(f"// Generated UPH5 model data for: {description}\n")
             f.write(f"// Model name: {model_name}\n")
             f.write(f"// Data size: {len(data_bytes)} bytes\n")
-            f.write(f"// Aligned for udl1.1 compatibility (4-byte alignment)\n\n")
+            f.write(f"// Aligned for {UPH5Compatibility.UDL_VERSION} compatibility ({UPH5Compatibility.MEMORY_ALIGNMENT}-byte alignment)\n\n")
 
             f.write(f"__attribute__((aligned(4))) const unsigned char {model_name}_data[] = {{\n")
 
@@ -548,7 +549,7 @@ def serialize_uph5_to_c_array(fused_data, model_name, description="no_descriptio
             f.write(f"#define {header_guard}\n\n")
             f.write(f"// Generated UPH5 model data for: {description}\n")
             f.write(f"// Model name: {model_name}\n")
-            f.write(f"// Aligned for udl1.1 compatibility (4-byte alignment)\n\n")
+            f.write(f"// Aligned for {UPH5Compatibility.UDL_VERSION} compatibility ({UPH5Compatibility.MEMORY_ALIGNMENT}-byte alignment)\n\n")
             f.write(f"extern __attribute__((aligned(4))) const unsigned char {model_name}_data[];\n")
             f.write(f"extern const unsigned int {model_name}_data_size;\n\n")
             f.write(f"#endif // {header_guard}\n")

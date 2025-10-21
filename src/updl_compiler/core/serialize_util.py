@@ -5,7 +5,13 @@
 import struct
 import numpy as np
 from .logger import log_error, log_debug, log_trace, log_info
-from .config import TAG_LENGTH, STRING_LENGTH
+from .formats.uph5_format import (
+    TAG_LENGTH,
+    STRING_LENGTH,
+    ALIGNMENT_4_BYTE,
+    WeightLayoutSpec,
+)
+from .formats.up301_hardware import INT16_RANGE
 
 
 def write_string(f, string, length=STRING_LENGTH, debug=False):
@@ -142,7 +148,8 @@ def scale_to_16(in_matrix, safety_margin=0.9):
     """Calculate shift factor to scale matrix values to int16 range with safety margin"""
     abs_val = np.abs(in_matrix)
     max_value = np.max(abs_val)
-    max_allowed = 32767 * safety_margin  # Add safety margin
+    INT16_MIN, INT16_MAX = INT16_RANGE
+    max_allowed = INT16_MAX * safety_margin  # Add safety margin
     shift = 0
 
     while max_value * 2 < max_allowed and shift < 14:  # Add upper limit to shift
@@ -159,11 +166,7 @@ def scale_to_16(in_matrix, safety_margin=0.9):
 def optimize_weights_layout(weights, layer_type, weight_name):
     """
     Unified weight layout optimization for embedded C runtime performance.
-
-    This function applies different optimizations based on layer type and weight name:
-    1. Convolutional layers: Spatial layout optimization (HWIO -> OIHW/I1HW)
-    2. Dense layers: Matrix multiplication optimization (transpose)
-    3. Bias vectors: No optimization needed
+    Uses centralized WeightLayoutSpec for consistent optimization rules.
 
     Args:
         weights: Input weight tensor/array
@@ -179,30 +182,35 @@ def optimize_weights_layout(weights, layer_type, weight_name):
         log_debug(f"Bias weights kept unchanged: {weights.shape}")
         return weights
 
+    # Check if optimization is needed using centralized spec
+    if not WeightLayoutSpec.requires_transpose(layer_type, weight_name):
+        log_debug(
+            f"{layer_type} {weight_name}: No layout optimization needed, shape: {weights.shape}"
+        )
+        return weights
+
     # === CONVOLUTIONAL LAYER OPTIMIZATIONS ===
     if layer_type == "Conv2D" and weight_name == "weight":
         # TensorFlow: [kernel_h, kernel_w, input_ch, output_ch] (HWIO)
         # C-optimal: [output_ch, input_ch, kernel_h, kernel_w] (OIHW)
-        log_debug(f"Conv2D: Converting HWIO {weights.shape} -> OIHW layout")
+        log_debug(f"Conv2D: Converting {WeightLayoutSpec.CONV2D_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.CONV2D_OPTIMAL_FORMAT} layout")
 
-        kernel_h, kernel_w, input_ch, output_ch = weights.shape
-        # Transpose: (H,W,I,O) -> (O,I,H,W) = (3,2,0,1)
-        optimized_weights = np.transpose(weights, (3, 2, 0, 1))
+        transpose_axes = WeightLayoutSpec.get_conv2d_transpose_axes()
+        optimized_weights = np.transpose(weights, transpose_axes)
 
-        log_debug(f"Conv2D: HWIO {weights.shape} -> OIHW {optimized_weights.shape}")
+        log_debug(f"Conv2D: {WeightLayoutSpec.CONV2D_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.CONV2D_OPTIMAL_FORMAT} {optimized_weights.shape}")
         return optimized_weights
 
     elif layer_type == "DepthwiseConv2D" and weight_name == "weight":
         # TensorFlow: [kernel_h, kernel_w, input_ch, depth_multiplier] (HWID)
         # C-optimal: [input_ch, depth_multiplier, kernel_h, kernel_w] (I1HW)
-        log_debug(f"DepthwiseConv2D: Converting HWID {weights.shape} -> I1HW layout")
+        log_debug(f"DepthwiseConv2D: Converting {WeightLayoutSpec.DEPTHWISE_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.DEPTHWISE_OPTIMAL_FORMAT} layout")
 
-        kernel_h, kernel_w, input_ch, depth_mult = weights.shape
-        # Transpose: (H,W,I,D) -> (I,D,H,W) = (2,3,0,1)
-        optimized_weights = np.transpose(weights, (2, 3, 0, 1))
+        transpose_axes = WeightLayoutSpec.get_depthwise_transpose_axes()
+        optimized_weights = np.transpose(weights, transpose_axes)
 
         log_debug(
-            f"DepthwiseConv2D: HWID {weights.shape} -> I1HW {optimized_weights.shape}"
+            f"DepthwiseConv2D: {WeightLayoutSpec.DEPTHWISE_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.DEPTHWISE_OPTIMAL_FORMAT} {optimized_weights.shape}"
         )
         return optimized_weights
 
@@ -211,35 +219,34 @@ def optimize_weights_layout(weights, layer_type, weight_name):
         # TensorFlow: [input_features, output_features]
         # C-optimal: [output_features, input_features] (transposed for cache efficiency)
         log_debug(
-            f"{layer_type}: Transposing {weight_name} {weights.shape} for matrix multiplication optimization"
+            f"{layer_type}: Converting {WeightLayoutSpec.DENSE_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.DENSE_OPTIMAL_FORMAT} for matrix multiplication optimization"
         )
 
         optimized_weights = weights.T
 
         log_debug(
-            f"{layer_type}: {weight_name} {weights.shape} -> {optimized_weights.shape} (transposed)"
+            f"{layer_type}: {WeightLayoutSpec.DENSE_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.DENSE_OPTIMAL_FORMAT} {optimized_weights.shape} (transposed)"
         )
         return optimized_weights
 
-    # === NO OPTIMIZATION NEEDED ===
+    # === FALLBACK ===
     else:
-        # Conv1D, other layer types, or unsupported weight names
         log_debug(
-            f"{layer_type} {weight_name}: No layout optimization needed, shape: {weights.shape}"
+            f"{layer_type} {weight_name}: No layout optimization rule found, shape: {weights.shape}"
         )
         return weights
 
 
-def write_alignment_padding(f, alignment=4, debug=False):
+def write_alignment_padding(f, alignment=ALIGNMENT_4_BYTE, debug=False):
     """Write padding bytes to align the current file position to specified alignment"""
     current_pos = f.tell()
     padding_needed = (alignment - (current_pos % alignment)) % alignment
-    
+
     if padding_needed > 0:
         padding_bytes = bytearray(padding_needed)  # Zero-filled padding
         f.write(padding_bytes)
         log_trace(f"Added {padding_needed} padding bytes for {alignment}-byte alignment (pos: {current_pos} -> {f.tell()})")
-    
+
     return padding_needed
 
 def write_weights(
@@ -280,7 +287,7 @@ def write_weights(
         write_uint16(f, dim, debug)
 
     # Ensure 4-byte alignment before writing weight data for hardware compatibility
-    write_alignment_padding(f, alignment=4, debug=debug)
+    write_alignment_padding(f, alignment=ALIGNMENT_4_BYTE, debug=debug)
 
     # Write weight data
     weight_bytes = scaled_weights.tobytes()

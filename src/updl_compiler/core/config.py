@@ -2,55 +2,20 @@
 # Copyright 2025 Upbeat, Inc
 # SPDX-License-Identifier: Apache-2.0
 
-# Constants for file format
-DESCRIPTION_LENGTH = 32
-TAG_LENGTH = 16
-STRING_LENGTH = 16
+"""
+Legacy configuration module - now imports from centralized format specifications.
+This module maintains backward compatibility while using the new centralized specs.
+"""
 
-# Type definitions (matching C implementation)
-DTYPE_LIST = [
-    "uint8_t",
-    "uint16_t",
-    "uint32_t",
-    "int8_t",
-    "int16_t",
-    "int32_t",
-    "bool",
-    "char",
-    "dtype_t",
-    "ltype_t",
-    "ptype_t",
-    "atype_t",
-]
-
-# CRITICAL: This order MUST match the C enum ltype_t in updl_interpreter.h exactly
-LTYPE_LIST = [
-    "Conv1D",  # 0: Ltype_conv_1d
-    "Conv2D",  # 1: Ltype_conv_2d
-    "DepthwiseConv2D",  # 2: Ltype_depthwise_conv_2d
-    "MaxPooling2D",  # 3: Ltype_max_pooling_2d
-    "AveragePooling2D",  # 4: Ltype_average_pooling_2d
-    "Dense",  # 5: Ltype_dense
-    "Flatten",  # 6: Ltype_flatten
-    "Lambda",  # 7: Ltype_lambda
-    "Softmax",  # 9: Ltype_softmax
-]
-
-# CRITICAL: This order MUST match the C enum ptype_t in updl_interpreter.h exactly
-# Ptype_valid=0, Ptype_same=1
-PTYPE_LIST = ["valid", "same"]  # 0: Ptype_valid  # 1: Ptype_same
-
-# CRITICAL: This order MUST match the C enum atype_t in updl_interpreter.h exactly
-# Atype_none=0, Atype_linear=1, ..., Atype_tanh=6
-ATYPE_LIST = [
-    "none",  # 0: Atype_none
-    "linear",  # 1: Atype_linear
-    "relu",  # 2: Atype_relu
-    "leakyrelu",  # 3: Atype_leakyrelu
-    "softmax",  # 4: Atype_softmax
-    "sigmoid",  # 5: Atype_sigmoid
-    "tanh",  # 6: Atype_tanh
-]
+from .formats.uph5_format import (
+    DESCRIPTION_LENGTH,
+    TAG_LENGTH,
+    STRING_LENGTH,
+    DTYPE_LIST,
+    LTYPE_LIST,
+    PTYPE_LIST,
+    ATYPE_LIST,
+)
 
 # ============================================================================
 # CENTRALIZED LAYER MANAGEMENT CONFIGURATION

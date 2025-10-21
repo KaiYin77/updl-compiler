@@ -92,8 +92,8 @@ def calculate_layer_activation(layer, layer_type, layer_idx, fused_activation=No
         scale, zero_point = json_params
 
         # Calculate approximate min/max from scale and quantization range
-        # For int16: [-32768, 32767]
-        qmin, qmax = -32768, 32767
+        from .formats.up301_hardware import INT16_RANGE
+        qmin, qmax = INT16_RANGE
         min_val = scale * qmin
         max_val = scale * qmax
 

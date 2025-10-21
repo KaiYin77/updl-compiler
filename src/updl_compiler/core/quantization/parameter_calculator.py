@@ -9,9 +9,14 @@ Quantization parameter calculation functions.
 import math
 import numpy as np
 from ..logger import log_info, log_warn
+from ..formats.up301_hardware import (
+    UP301HardwareSpec,
+    INT16_RANGE,
+    UDL_MAX_SHIFT,
+)
 
 
-def calculate_udl_power_of_2_scale(original_scale, max_shift=15, max_abs_value=None):
+def calculate_udl_power_of_2_scale(original_scale, max_shift=UDL_MAX_SHIFT, max_abs_value=None):
     """Convert arbitrary scale to nearest power-of-2 for UDL hardware
 
     Uses improved error minimization algorithm with overflow protection that matches C implementation:
@@ -36,7 +41,8 @@ def calculate_udl_power_of_2_scale(original_scale, max_shift=15, max_abs_value=N
         if max_val is None:
             return False
         quantized = max_val / scale
-        return abs(quantized) > 32767
+        INT16_MIN, INT16_MAX = INT16_RANGE
+        return abs(quantized) > INT16_MAX
 
     # Improved power-of-2 approximation with error minimization (matches C implementation)
     log2_scale = math.log2(original_scale)
@@ -123,8 +129,8 @@ def calculate_symmetric_quantization_params(min_val, max_val, udl_mode=True):
         tuple: (scale, zero_point) for symmetric quantization
         Note: zero_point is always 0 for symmetric quantization
     """
-    # int16 range: [-32768, 32767]
-    qmin, qmax = -32768, 32767
+    # Get int16 range from hardware specs
+    qmin, qmax = INT16_RANGE
 
     # Handle edge cases
     if min_val == max_val:
