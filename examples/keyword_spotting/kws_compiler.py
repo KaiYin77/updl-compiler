@@ -21,7 +21,7 @@ def main():
     print("Compiling KWS model...")
 
     # Configuration
-    model_path = "kws_ref_model/"
+    model_path = "ref_model/"
     dataset_dir = "/home/kaiyin-upbeat/data"
     calibration_indices_file = "kws_quantize_calibrate_idxs.txt"
 
