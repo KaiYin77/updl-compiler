@@ -1,0 +1,3 @@
+[submodule "updl-runtime"]
+	path = updl-runtime
+	url = https://github.com/KaiYin77/updl-runtime.git
