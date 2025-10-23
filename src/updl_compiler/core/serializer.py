@@ -296,6 +296,30 @@ def _write_layer_data_from_fused(f, layer_data, layer_type, layer_idx=0, all_lay
     write_tag(f, "input_shape", debug=False)
     input_shape = layer_data.get("input_shape", [1, 1, 1, 1])
 
+    # Handle Add layer shape processing specifically
+    if layer_type == "Add":
+        # Convert tuple to list and handle None values (dynamic batch size)
+        if isinstance(input_shape, tuple):
+            input_shape = list(input_shape)
+
+        # Flatten nested structures: if input_shape contains tuples, flatten them
+        flattened_shape = []
+        for item in input_shape:
+            if isinstance(item, (tuple, list)):
+                # Take the first tuple if there are multiple identical ones
+                flattened_shape = list(item)
+                break
+            else:
+                flattened_shape.append(item)
+
+        # If we found a nested structure, use it; otherwise use original
+        if any(isinstance(item, (tuple, list)) for item in input_shape):
+            input_shape = flattened_shape
+
+    # Replace None with 1 (common for dynamic batch size) - only if None values exist
+    if any(dim is None for dim in input_shape):
+        input_shape = [1 if dim is None else dim for dim in input_shape]
+
     # Dense layer expects 2D input shape in C loader
     if layer_type == "Dense":
         # Dense input should be 2D: [batch_size, input_features]
@@ -312,6 +336,30 @@ def _write_layer_data_from_fused(f, layer_data, layer_type, layer_idx=0, all_lay
 
     write_tag(f, "output_shape", debug=False)
     output_shape = layer_data.get("output_shape", [1, 1, 1, 1])
+
+    # Handle Add layer shape processing specifically
+    if layer_type == "Add":
+        # Convert tuple to list and handle None values (dynamic batch size)
+        if isinstance(output_shape, tuple):
+            output_shape = list(output_shape)
+
+        # Flatten nested structures: if output_shape contains tuples, flatten them
+        flattened_shape = []
+        for item in output_shape:
+            if isinstance(item, (tuple, list)):
+                # Take the first tuple if there are multiple identical ones
+                flattened_shape = list(item)
+                break
+            else:
+                flattened_shape.append(item)
+
+        # If we found a nested structure, use it; otherwise use original
+        if any(isinstance(item, (tuple, list)) for item in output_shape):
+            output_shape = flattened_shape
+
+    # Replace None with 1 (common for dynamic batch size) - only if None values exist
+    if any(dim is None for dim in output_shape):
+        output_shape = [1 if dim is None else dim for dim in output_shape]
 
     # Flatten and Dense layers expect 2D output shape in C loader
     if layer_type in ["Flatten", "Dense"]:
@@ -447,6 +495,11 @@ def _write_layer_data_from_fused(f, layer_data, layer_type, layer_idx=0, all_lay
         # The shapes are already written above, so nothing additional needed
         pass
 
+    elif layer_type == "Add":
+        # Add layer has no specific parameters beyond input/output shapes
+        # The shapes are already written above, so nothing additional needed
+        pass
+
     elif layer_type == "Softmax":
         # Softmax layer has no specific parameters beyond input/output shapes
         # The shapes are already written above, so nothing additional needed
@@ -459,12 +512,18 @@ def _write_layer_data_from_fused(f, layer_data, layer_type, layer_idx=0, all_lay
     write_enum(f, activation, ATYPE_LIST, debug=False)
 
     # Write quantization parameters
-    act_scale = layer_data.get("act_scale", 1.0)
-    act_zp = layer_data.get("act_zp", 0)
-    weight_scale = layer_data.get("weight_scale", 1.0)
-    weight_zp = layer_data.get("weight_zp", 0)
-    bias_scale = layer_data.get("bias_scale", 1.0)
-    bias_zp = layer_data.get("bias_zp", 0)        
+    def extract_scalar(value, default):
+        """Extract scalar from potentially tuple/array value"""
+        if isinstance(value, (tuple, list)):
+            return value[0] if len(value) > 0 else default
+        return value if value is not None else default
+
+    act_scale = extract_scalar(layer_data.get("act_scale"), 1.0)
+    act_zp = extract_scalar(layer_data.get("act_zp"), 0)
+    weight_scale = extract_scalar(layer_data.get("weight_scale"), 1.0)
+    weight_zp = extract_scalar(layer_data.get("weight_zp"), 0)
+    bias_scale = extract_scalar(layer_data.get("bias_scale"), 1.0)
+    bias_zp = extract_scalar(layer_data.get("bias_zp"), 0)        
 
     write_quantization_parameters(
         f, act_scale, act_zp, weight_scale, weight_zp, bias_scale, bias_zp, debug=False

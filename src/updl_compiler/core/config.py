@@ -33,15 +33,17 @@ LAYER_CONFIG = {
         "Dense",
         "Flatten",
         "Lambda",
+        "Add",
         "Softmax",
     },
     # Layers that are automatically skipped (not serialized)
     "SKIPPED": {
         "Dropout",
         "BatchNormalization",
+        "Activation",  # Activation layers should be fused with previous layers
     },  # Dropout not needed for inference, BatchNorm fused with Conv
     # Layers that can accept fused activations
-    "FUSEABLE": {"Conv1D", "Conv2D", "Dense", "DepthwiseConv2D", "BatchNormalization"},
+    "FUSEABLE": {"Conv1D", "Conv2D", "Dense", "DepthwiseConv2D", "BatchNormalization", "Add"},
     # Layers that are used for activation fusion (will be skipped after fusion)
     "ACTIVATION": {"Activation"},
 }

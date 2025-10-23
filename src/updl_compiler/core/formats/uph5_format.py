@@ -47,6 +47,7 @@ LTYPE_LIST = [
     "Dense",  # 5: Ltype_dense
     "Flatten",  # 6: Ltype_flatten
     "Lambda",  # 7: Ltype_lambda
+    "Add",  # 8: Ltype_add
     "Softmax",  # 9: Ltype_softmax
 ]
 

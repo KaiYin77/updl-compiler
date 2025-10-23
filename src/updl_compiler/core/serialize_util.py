@@ -86,7 +86,7 @@ def write_shape(f, shape, dim_count=4, debug=False):
         # Default value for missing dimensions
         dim_value = 0
         if i < len(shape) and shape[i] is not None:
-            dim_value = shape[i]
+            dim_value = int(shape[i])  # Ensure integer conversion
         write_uint16(f, dim_value, debug)
 
     log_trace(f"Shape: {shape} (as {dim_count} dimensions)")
