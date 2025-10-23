@@ -148,17 +148,21 @@ def calculate_symmetric_quantization_params(min_val, max_val, udl_mode=True):
     # If UDL shift-only mode is enabled, convert to power-of-2 scale
     if udl_mode:
         original_scale = scale
-        power_of_2_scale, shift, absolute_relative_error = calculate_udl_power_of_2_scale(original_scale, max_abs_value=max_abs)
+        power_of_2_scale, shift, _ = calculate_udl_power_of_2_scale(original_scale, max_abs_value=max_abs)
+        k = power_of_2_scale / original_scale
+        bits_off = math.log2(k) if k > 0 else float('inf')
+        snr_penalty_db = 20 * math.log10(k) if k > 0 else float('inf')
 
-        # Debug logging that matches C implementation format
-        log_info(f"UDL Power-of-2 conversion: {original_scale:.8f} -> {power_of_2_scale:.8f} "
-                 f"(shift={shift}, abs_rel_error={absolute_relative_error:.6f})")
+        log_info(
+            f"UDL Power-of-2 conversion: {original_scale:.8e} -> {power_of_2_scale:.8e} "
+            f"(shift={shift}, bits_off={bits_off:.2f}, SNR_penalty={snr_penalty_db:.2f} dB)"
+        )
 
-        # Warn if approximation error is significant (>10% error)
-        if absolute_relative_error > 0.1:
-            log_warn(f"Quantizer: Significant UDL power-of-2 approximation error - "
-                    f"original scale {original_scale:.8f} approximated as {power_of_2_scale:.8f} "
-                    f"with {absolute_relative_error:.1%} error. This may impact model accuracy.")
+        if abs(bits_off) > 1.0:
+            log_warn(
+                f"Quantizer: Power-of-2 approximation & Hardward-constriant caused {bits_off:.2f} bits loss "
+                f"(≈{snr_penalty_db:.1f} dB SNR penalty)."
+            )
 
         scale = power_of_2_scale
 
