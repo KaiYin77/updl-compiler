@@ -7,7 +7,7 @@ from .logger import (
     log_error,
     log_info,
 )
-from .formats.uph5_format import (
+from .schema import (
     DESCRIPTION_LENGTH,
     DTYPE_LIST,
     LTYPE_LIST,

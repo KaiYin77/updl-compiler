@@ -5,13 +5,13 @@
 import struct
 import numpy as np
 from .logger import log_error, log_debug, log_trace, log_info
-from .formats.uph5_format import (
+from .schema import (
     TAG_LENGTH,
     STRING_LENGTH,
     ALIGNMENT_4_BYTE,
     WeightLayoutSpec,
 )
-from .formats.up301_hardware import INT16_RANGE
+from .hardware import INT16_RANGE
 
 
 def write_string(f, string, length=STRING_LENGTH, debug=False):
@@ -193,24 +193,24 @@ def optimize_weights_layout(weights, layer_type, weight_name):
     if layer_type == "Conv2D" and weight_name == "weight":
         # TensorFlow: [kernel_h, kernel_w, input_ch, output_ch] (HWIO)
         # C-optimal: [output_ch, input_ch, kernel_h, kernel_w] (OIHW)
-        log_debug(f"Conv2D: Converting {WeightLayoutSpec.CONV2D_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.CONV2D_OPTIMAL_FORMAT} layout")
+        log_debug(f"Conv2D: Converting {WeightLayoutSpec.CONV2D_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.CONV2D_UDL_FORMAT} layout")
 
         transpose_axes = WeightLayoutSpec.get_conv2d_transpose_axes()
         optimized_weights = np.transpose(weights, transpose_axes)
 
-        log_debug(f"Conv2D: {WeightLayoutSpec.CONV2D_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.CONV2D_OPTIMAL_FORMAT} {optimized_weights.shape}")
+        log_debug(f"Conv2D: {WeightLayoutSpec.CONV2D_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.CONV2D_UDL_FORMAT} {optimized_weights.shape}")
         return optimized_weights
 
     elif layer_type == "DepthwiseConv2D" and weight_name == "weight":
         # TensorFlow: [kernel_h, kernel_w, input_ch, depth_multiplier] (HWID)
         # C-optimal: [input_ch, depth_multiplier, kernel_h, kernel_w] (I1HW)
-        log_debug(f"DepthwiseConv2D: Converting {WeightLayoutSpec.DEPTHWISE_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.DEPTHWISE_OPTIMAL_FORMAT} layout")
+        log_debug(f"DepthwiseConv2D: Converting {WeightLayoutSpec.DEPTHWISE_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.DEPTHWISE_UDL_FORMAT} layout")
 
         transpose_axes = WeightLayoutSpec.get_depthwise_transpose_axes()
         optimized_weights = np.transpose(weights, transpose_axes)
 
         log_debug(
-            f"DepthwiseConv2D: {WeightLayoutSpec.DEPTHWISE_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.DEPTHWISE_OPTIMAL_FORMAT} {optimized_weights.shape}"
+            f"DepthwiseConv2D: {WeightLayoutSpec.DEPTHWISE_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.DEPTHWISE_UDL_FORMAT} {optimized_weights.shape}"
         )
         return optimized_weights
 
@@ -219,13 +219,13 @@ def optimize_weights_layout(weights, layer_type, weight_name):
         # TensorFlow: [input_features, output_features]
         # C-optimal: [output_features, input_features] (transposed for cache efficiency)
         log_debug(
-            f"{layer_type}: Converting {WeightLayoutSpec.DENSE_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.DENSE_OPTIMAL_FORMAT} for matrix multiplication optimization"
+            f"{layer_type}: Converting {WeightLayoutSpec.DENSE_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.DENSE_UDL_FORMAT} for matrix multiplication optimization"
         )
 
         optimized_weights = weights.T
 
         log_debug(
-            f"{layer_type}: {WeightLayoutSpec.DENSE_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.DENSE_OPTIMAL_FORMAT} {optimized_weights.shape} (transposed)"
+            f"{layer_type}: {WeightLayoutSpec.DENSE_TF_FORMAT} {weights.shape} -> {WeightLayoutSpec.DENSE_UDL_FORMAT} {optimized_weights.shape} (transposed)"
         )
         return optimized_weights
 

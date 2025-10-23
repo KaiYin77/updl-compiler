@@ -5,8 +5,10 @@
 """
 UP301/UP201 Hardware Specifications
 
-This module centralizes all hardware-specific constants for UP301 and UP201
-embedded AI accelerators to ensure consistent quantization and optimization.
+⚠️  HARDWARE CRITICAL: These specifications define quantization constraints
+    and optimization parameters for UP301/UP201 embedded AI accelerators.
+    DO NOT MODIFY without careful testing on target hardware.
+    Future development should be extremely careful with these definitions.
 """
 
 from dataclasses import dataclass
@@ -15,10 +17,11 @@ import numpy as np
 
 
 # === Hardware Quantization Constants ===
+# ⚠️  HARDWARE CRITICAL: INT16 range must match hardware capabilities exactly
 INT16_RANGE: Tuple[int, int] = (-32768, 32767)
 INT16_MIN, INT16_MAX = INT16_RANGE
 
-# UDL (Upbeat Deep Learning) specific constants
+# ⚠️  HARDWARE CRITICAL: UDL (Upbeat Deep Learning) specific constants
 UDL_MAX_SHIFT = 15  # Maximum bit shift for power-of-2 scaling
 UDL_SAFETY_MARGIN = 0.9  # Safety margin for int16 overflow prevention
 UDL_DEFAULT_MODE = True  # Enable UDL mode by default
@@ -26,7 +29,10 @@ UDL_DEFAULT_MODE = True  # Enable UDL mode by default
 
 @dataclass
 class UP301HardwareSpec:
-    """Hardware specifications for UP301/UP201 embedded AI accelerators"""
+    """
+    ⚠️  HARDWARE CRITICAL: Hardware specifications for UP301/UP201 embedded AI accelerators
+    Changes to these parameters affect quantization and performance on target hardware.
+    """
 
     # Quantization specifications
     quantization_dtype: str = "int16_t"
@@ -58,7 +64,7 @@ class UP301HardwareSpec:
     )
 
     def validate_quantization_range(self, min_val: float, max_val: float) -> bool:
-        """Validate that quantization range fits in hardware specs"""
+        """⚠️  HARDWARE SENSITIVE: Validate that quantization range fits in hardware specs"""
         if self.zero_point_symmetric:
             # For symmetric quantization, check the larger absolute value
             max_abs = max(abs(min_val), abs(max_val))
@@ -68,7 +74,7 @@ class UP301HardwareSpec:
             return INT16_MIN <= min_val and max_val <= INT16_MAX
 
     def calculate_optimal_scale(self, min_val: float, max_val: float) -> float:
-        """Calculate optimal quantization scale for hardware"""
+        """⚠️  HARDWARE SENSITIVE: Calculate optimal quantization scale for hardware"""
         if self.zero_point_symmetric:
             max_abs = max(abs(min_val), abs(max_val))
             return max_abs / INT16_MAX
@@ -77,7 +83,7 @@ class UP301HardwareSpec:
             return value_range / (INT16_MAX - INT16_MIN)
 
     def is_power_of_2_scale(self, scale: float, tolerance: float = 1e-6) -> bool:
-        """Check if scale is approximately a power of 2"""
+        """⚠️  HARDWARE SENSITIVE: Check if scale is approximately a power of 2"""
         if scale <= 0:
             return False
 
@@ -89,7 +95,7 @@ class UP301HardwareSpec:
         return abs(scale - closest_scale) < tolerance
 
     def get_power_of_2_approximation(self, scale: float) -> Tuple[float, int]:
-        """Get the closest power-of-2 approximation and corresponding shift"""
+        """⚠️  HARDWARE SENSITIVE: Get the closest power-of-2 approximation and corresponding shift"""
         if scale <= 0:
             return scale, 0
 
@@ -103,7 +109,7 @@ class UP301HardwareSpec:
         return power_of_2_scale, shift
 
     def check_overflow_risk(self, values: np.ndarray, scale: float) -> bool:
-        """Check if quantizing with given scale would cause int16 overflow"""
+        """⚠️  HARDWARE SENSITIVE: Check if quantizing with given scale would cause int16 overflow"""
         if len(values) == 0:
             return False
 
@@ -112,7 +118,7 @@ class UP301HardwareSpec:
         return np.any(quantized < INT16_MIN) or np.any(quantized > INT16_MAX)
 
     def get_safe_scale(self, values: np.ndarray) -> float:
-        """Calculate a safe scale that prevents overflow"""
+        """⚠️  HARDWARE SENSITIVE: Calculate a safe scale that prevents overflow"""
         if len(values) == 0:
             return 1.0
 
@@ -124,7 +130,7 @@ class UP301HardwareSpec:
 # === Predefined Hardware Configurations ===
 
 class HardwareConfigs:
-    """Predefined hardware configurations for different deployment targets"""
+    """⚠️  HARDWARE SENSITIVE: Predefined hardware configurations for different deployment targets"""
 
     @staticmethod
     def up301_config() -> UP301HardwareSpec:
@@ -159,7 +165,7 @@ def validate_hardware_compatibility(values: np.ndarray,
                                    scale: float,
                                    zero_point: int = 0,
                                    hardware_spec: UP301HardwareSpec = None) -> bool:
-    """Validate that quantization parameters are compatible with hardware"""
+    """⚠️  HARDWARE SENSITIVE: Validate that quantization parameters are compatible with hardware"""
     if hardware_spec is None:
         hardware_spec = UP301HardwareSpec()
 
@@ -173,7 +179,7 @@ def validate_hardware_compatibility(values: np.ndarray,
 def optimize_scale_for_hardware(values: np.ndarray,
                                target_scale: float,
                                hardware_spec: UP301HardwareSpec = None) -> Tuple[float, bool]:
-    """Optimize scale for hardware efficiency"""
+    """⚠️  HARDWARE SENSITIVE: Optimize scale for hardware efficiency"""
     if hardware_spec is None:
         hardware_spec = UP301HardwareSpec()
 

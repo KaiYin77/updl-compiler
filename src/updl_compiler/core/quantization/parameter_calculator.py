@@ -9,7 +9,7 @@ Quantization parameter calculation functions.
 import math
 import numpy as np
 from ..logger import log_info, log_warn
-from ..formats.up301_hardware import (
+from ..hardware import (
     UP301HardwareSpec,
     INT16_RANGE,
     UDL_MAX_SHIFT,

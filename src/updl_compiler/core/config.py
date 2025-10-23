@@ -3,11 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Legacy configuration module - now imports from centralized format specifications.
-This module maintains backward compatibility while using the new centralized specs.
+Layer Configuration Management
+
+This module provides centralized layer management configuration and utilities.
+Schema definitions are now imported from the dedicated schema module.
 """
 
-from .formats.uph5_format import (
+from .schema import (
     DESCRIPTION_LENGTH,
     TAG_LENGTH,
     STRING_LENGTH,
@@ -15,6 +17,8 @@ from .formats.uph5_format import (
     LTYPE_LIST,
     PTYPE_LIST,
     ATYPE_LIST,
+    validate_layer_type,
+    validate_activation_type,
 )
 
 # ============================================================================
@@ -118,7 +122,10 @@ def analyze_model_layers(model):
 
 
 def validate_layer_configuration():
-    """Validate that LTYPE_LIST matches SUPPORTED layers configuration"""
+    """
+    ⚠️  SCHEMA SENSITIVE: Validate that LTYPE_LIST matches SUPPORTED layers configuration
+    This ensures consistency between schema definitions and layer management.
+    """
     from .logger import log_trace
 
     supported_set = LAYER_CONFIG["SUPPORTED"].copy()

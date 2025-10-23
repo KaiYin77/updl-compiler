@@ -5,8 +5,10 @@
 """
 UPH5 (Upbeat Portable HDF5) Format Specification
 
-This module centralizes all UPH5 binary format constants and data structures
-to ensure consistency across serialization and deserialization modules.
+⚠️  SCHEMA CRITICAL: All constants and enums in this file MUST match
+    C enum definitions in updl_interpreter.h exactly.
+    DO NOT MODIFY without corresponding changes to the C runtime.
+    Future development should be extremely careful with these definitions.
 """
 
 from dataclasses import dataclass
@@ -21,7 +23,7 @@ STRING_LENGTH = 16
 ALIGNMENT_4_BYTE = 4
 
 # === Data Type Specifications ===
-# CRITICAL: These lists MUST match the C enum definitions in updl_interpreter.h exactly
+# ⚠️  SCHEMA CRITICAL: These lists MUST match the C enum definitions in updl_interpreter.h exactly
 DTYPE_LIST = [
     "uint8_t",
     "uint16_t",
@@ -37,7 +39,7 @@ DTYPE_LIST = [
     "atype_t",
 ]
 
-# CRITICAL: This order MUST match the C enum ltype_t in updl_interpreter.h exactly
+# ⚠️  SCHEMA CRITICAL: This order MUST match the C enum ltype_t in updl_interpreter.h exactly
 LTYPE_LIST = [
     "Conv1D",  # 0: Ltype_conv_1d
     "Conv2D",  # 1: Ltype_conv_2d
@@ -51,11 +53,11 @@ LTYPE_LIST = [
     "Softmax",  # 9: Ltype_softmax
 ]
 
-# CRITICAL: This order MUST match the C enum ptype_t in updl_interpreter.h exactly
+# ⚠️  SCHEMA CRITICAL: This order MUST match the C enum ptype_t in updl_interpreter.h exactly
 # Ptype_valid=0, Ptype_same=1
 PTYPE_LIST = ["valid", "same"]  # 0: Ptype_valid  # 1: Ptype_same
 
-# CRITICAL: This order MUST match the C enum atype_t in updl_interpreter.h exactly
+# ⚠️  SCHEMA CRITICAL: This order MUST match the C enum atype_t in updl_interpreter.h exactly
 # Atype_none=0, Atype_linear=1, ..., Atype_tanh=6
 ATYPE_LIST = [
     "none",  # 0: Atype_none
@@ -150,7 +152,7 @@ class UPH5FormatSpec:
         return True
 
     def _validate_layer(self, layer: UPH5LayerMetadata) -> bool:
-        """Validate individual layer metadata"""
+        """⚠️  SCHEMA SENSITIVE: Validate individual layer metadata"""
         # Check layer type
         layer_type = layer.layer_type
         if layer_type == "BatchNormalization":
@@ -186,14 +188,14 @@ class WeightLayoutSpec:
 
     # Convolutional layer layouts
     CONV2D_TF_FORMAT = "HWIO"  # TensorFlow: [H, W, I, O]
-    CONV2D_OPTIMAL_FORMAT = "OIHW"  # C-optimal: [O, I, H, W]
+    CONV2D_UDL_FORMAT = "OIHW"  # C-optimal: [O, I, H, W]
 
     DEPTHWISE_TF_FORMAT = "HWID"  # TensorFlow: [H, W, I, D]
-    DEPTHWISE_OPTIMAL_FORMAT = "I1HW"  # C-optimal: [I, 1, H, W]
+    DEPTHWISE_UDL_FORMAT = "I1HW"  # C-optimal: [I, 1, H, W]
 
     # Dense layer layouts
     DENSE_TF_FORMAT = "IF"  # TensorFlow: [input_features, output_features]
-    DENSE_OPTIMAL_FORMAT = "FI"  # C-optimal: [output_features, input_features]
+    DENSE_UDL_FORMAT = "FI"  # C-optimal: [output_features, input_features]
 
     @staticmethod
     def get_conv2d_transpose_axes():

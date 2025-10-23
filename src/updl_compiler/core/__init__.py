@@ -52,7 +52,6 @@ from .quantization import (
     calculate_symmetric_quantization_params,
 )
 
-
 from .preprocessors import (
     DataPreprocessor,
 )
@@ -71,10 +70,13 @@ from .logger import (
     log_error,
 )
 
-from .formats import (
+from .schema import (
     UPH5FormatSpec,
     UPH5LayerMetadata,
     UPH5QuantizationParams,
+)
+
+from .hardware import (
     UP301HardwareSpec,
     INT16_RANGE,
     UDL_MAX_SHIFT,
@@ -115,7 +117,9 @@ __all__ = [
     "LOG_LEVEL_DEBUG", "LOG_LEVEL_TRACE", "set_log_level",
     "log_info", "log_debug", "log_warn", "log_error",
 
-    # Format Specifications
+    # Schema Specifications
     "UPH5FormatSpec", "UPH5LayerMetadata", "UPH5QuantizationParams",
+
+    # Hardware Specifications
     "UP301HardwareSpec", "INT16_RANGE", "UDL_MAX_SHIFT", "UDL_SAFETY_MARGIN",
 ]
