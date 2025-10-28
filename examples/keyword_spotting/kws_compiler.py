@@ -18,7 +18,17 @@ from kws_preprocessor import KWSPreprocessor
 
 
 def main():
-    print("Compiling KWS model...")
+    import argparse
+
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='KWS Model Compiler')
+    parser.add_argument('--format', choices=['uph5', 'flatbuffers'], default='uph5',
+                      help='Output format: uph5 (default) or flatbuffers')
+    parser.add_argument('--model-name', default='kws_uph5_model',
+                      help='Model name for output files')
+    args = parser.parse_args()
+
+    print(f"Compiling KWS model in {args.format} format...")
 
     # Configuration
     model_path = "ref_model/"
@@ -41,14 +51,21 @@ def main():
             'indices_file': calibration_indices_file if os.path.exists(calibration_indices_file) else None
         }
 
-        # Compile model
-        _ = compile_model(
+        # Compile model with selected format
+        result = compile_model(
             model=model_path,
             preprocessor=preprocessor,
             calibration_data=calibration_data,
-            model_name="kws_uph5_model",
-            description="no_description"
+            model_name=args.model_name,
+            description="no_description",
+            format=args.format
         )
+
+        print(f"✅ Compilation successful!")
+        print(f"   Format: {result['format']}")
+        print(f"   Model: {result['model_name']}")
+        print(f"   Size: {result['file_size']} bytes")
+        print(f"   Output: {result['output_format_dir']}")
 
     except Exception as e:
         print(f"Error: {e}")

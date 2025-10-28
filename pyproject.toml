@@ -12,6 +12,7 @@ dependencies = [
     "numpy>=1.21.0",
     "tqdm>=4.67.1",
     "tensorflow-datasets>=4.9.3",
+    "flatbuffers>=25.9.23",
 ]
 keywords = ["machine-learning", "embedded", "quantization", "tensorflow", "inference"]
 classifiers = [

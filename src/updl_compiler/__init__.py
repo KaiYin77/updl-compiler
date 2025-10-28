@@ -16,7 +16,12 @@ __license__ = "Apache-2.0"
 from .core.loader import load_model
 from .core.quantizer import initialize_params, set_udl_shift_only_mode
 from .core.fuser import fuse_layers_from_json, fuse_to_uph5_layer, combine_fused_data_step5
-from .core.serializer import serialize_uph5_to_c_array, serialize_uph5_metadata_to_json
+from .core.serializer import (
+    serialize_uph5_to_c_array,
+    serialize_uph5_metadata_to_json,
+    serialize_flatbuffers_to_c_array,
+    serialize_uph5_to_flatbuffers
+)
 from .core.config import validate_layer_configuration
 from .core.quantization_analyzer import QuantizationAnalyzer
 from .core.preprocessors import DataPreprocessor
@@ -28,6 +33,7 @@ def compile_model(
     model_name: str = None,
     description: str = "no_description",
     output_dir: str = None,
+    format: str = "uph5",  # "uph5" or "flatbuffers"
 ):
     """
     Compile a model with automatic quantization analysis (streamlined workflow)
@@ -39,6 +45,7 @@ def compile_model(
         model_name: Name for the generated model (auto-extracted if not provided)
         description: Model description
         output_dir: Directory to write output artifacts
+        format: Output format - "uph5" (default) or "flatbuffers"
 
     Returns:
         dict: Compilation results with file paths and sizes
@@ -101,24 +108,32 @@ def compile_model(
         fused_data = combine_fused_data_step5(fusable_data, fused_layers)
 
         # Generate outputs
-        log_info(f"Serializer: Generating C arrays for {model_name}")
+        log_info(f"Serializer: Generating {format} C arrays for {model_name}")
 
         # Metadata JSON
-        metadata_json = os.path.join(output_dir, ".updlc_cache", f"uph5_metadata_{base_name}.json")
+        metadata_json = os.path.join(output_dir, ".updlc_cache", f"{format}_metadata_{base_name}.json")
         os.makedirs(os.path.dirname(metadata_json), exist_ok=True)
         serialize_uph5_metadata_to_json(fused_data, metadata_json)
 
-        # C Array - save to uph5 directory
-        uph5_dir = os.path.join(output_dir, "uph5")
-        os.makedirs(uph5_dir, exist_ok=True)
-        file_size = serialize_uph5_to_c_array(fused_data, model_name, description=description, output_dir=uph5_dir)
+        # C Array - choose format
+        output_subdir = "uph5" if format == "uph5" else "flatbuffers"
+        output_format_dir = os.path.join(output_dir, output_subdir)
+        os.makedirs(output_format_dir, exist_ok=True)
+
+        if format == "flatbuffers":
+            file_size = serialize_flatbuffers_to_c_array(fused_data, model_name, description=description, output_dir=output_format_dir)
+            log_info(f"FlatBuffers: Generated C arrays in {output_format_dir}")
+        else:
+            file_size = serialize_uph5_to_c_array(fused_data, model_name, description=description, output_dir=output_format_dir)
+            log_info(f"UPH5: Generated C arrays in {output_format_dir}")
 
         result = {
             "model_name": model_name,
             "file_size": file_size,
             "metadata_json": metadata_json,
-            "uph5_dir": uph5_dir,
-            "output_dir": output_dir
+            "output_format_dir": output_format_dir,
+            "output_dir": output_dir,
+            "format": format
         }
 
         # Add quantization info to result

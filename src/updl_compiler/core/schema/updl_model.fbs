@@ -1,0 +1,106 @@
+// Copyright 2025 Upbeat, Inc
+// SPDX-License-Identifier: Apache-2.0
+
+// UPDL FlatBuffers Schema - matches existing UPH5 format exactly
+// CRITICAL: Enum values must match C definitions in updl_interpreter.h
+
+namespace UPDL;
+
+// Data types - matches DTYPE_LIST
+enum DType : uint8 {
+  uint8_t = 0,
+  uint16_t = 1,
+  uint32_t = 2,
+  int8_t = 3,
+  int16_t = 4,
+  int32_t = 5,
+  bool = 6,
+  char = 7,
+  dtype_t = 8,
+  ltype_t = 9,
+  ptype_t = 10,
+  atype_t = 11
+}
+
+// Layer types - matches LTYPE_LIST exactly
+enum LayerType : uint8 {
+  Conv1D = 0,
+  Conv2D = 1,
+  DepthwiseConv2D = 2,
+  MaxPooling2D = 3,
+  AveragePooling2D = 4,
+  Dense = 5,
+  Flatten = 6,
+  Lambda = 7,
+  Add = 8,
+  Softmax = 9
+}
+
+// Padding types - matches PTYPE_LIST
+enum PaddingType : uint8 {
+  valid = 0,
+  same = 1
+}
+
+// Activation types - matches ATYPE_LIST
+enum ActivationType : uint8 {
+  none = 0,
+  linear = 1,
+  relu = 2,
+  leakyrelu = 3,
+  softmax = 4,
+  sigmoid = 5,
+  tanh = 6
+}
+
+// Quantization parameters
+table QuantizationParams {
+  act_scale: float;
+  act_zp: int16;
+  weight_scale: float;
+  weight_zp: int16;
+  bias_scale: float;
+  bias_zp: int16;
+}
+
+// Weight data with alignment
+table WeightData {
+  shape_d: uint16;
+  shape: [uint16];
+  data: [int16] (force_align: 4);  // 4-byte aligned for XIP
+}
+
+// Layer definition
+table Layer {
+  name: string;
+  type: LayerType;
+  input_shape: [uint16];
+  output_shape: [uint16];
+  activation: ActivationType;
+  quantization: QuantizationParams;
+
+  // Layer-specific parameters (optional based on layer type)
+  filters: uint16 = 0;
+  kernel_size: [uint16];
+  strides: [uint16];
+  padding: PaddingType = valid;
+  depth_multiplier: uint16 = 1;
+  units: uint16 = 0;
+  pool_size: [uint16];
+
+  // Weight data
+  weights: WeightData;
+  bias: WeightData;
+}
+
+// Complete model
+table UPDLModel {
+  description: string;
+  model_name: string;
+  dtype: DType = int16_t;
+  input_scale: float;
+  input_shape: [uint16];
+  layers: [Layer];
+}
+
+root_type UPDLModel;

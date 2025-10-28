@@ -2082,6 +2082,7 @@ name = "updl-compiler"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "flatbuffers" },
     { name = "numpy" },
     { name = "tensorflow" },
     { name = "tensorflow-datasets" },
@@ -2113,6 +2114,7 @@ dev = [
 requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=22.0.0" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=5.0.0" },
+    { name = "flatbuffers", specifier = ">=25.9.23" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "numpy", specifier = ">=1.21.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
@@ -2139,6 +2141,7 @@ version = "0.1.0"
 source = { virtual = "examples" }
 dependencies = [
     { name = "absl-py" },
+    { name = "flatbuffers" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "pillow" },
@@ -2149,6 +2152,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "absl-py", specifier = ">=2.3.1" },
+    { name = "flatbuffers", specifier = ">=25.9.23" },
     { name = "matplotlib", specifier = ">=3.10.7" },
     { name = "numpy", specifier = ">=1.24.3" },
     { name = "pillow", specifier = ">=12.0.0" },
