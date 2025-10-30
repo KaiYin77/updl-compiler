@@ -49,11 +49,11 @@ def apply_fusion_to_model(model, fusion_groups):
         log_debug(f"Processing fusion group: {group_name}")
 
         # Find the layers in this group
-        conv_layer = None
+        primary_layer = None
         bn_layer = None
         activation_layer = None
         dropout_layer = None
-        conv_idx = None
+        primary_idx = None
 
         # Match by layer type and position
         for layer_name, layer_info in group_layers.items():
@@ -66,9 +66,9 @@ def apply_fusion_to_model(model, fusion_groups):
                 expected_type = model_layer.__class__.__name__
 
                 if expected_type == layer_type:
-                    if layer_type in ["Conv2D", "DepthwiseConv2D"]:
-                        conv_layer = model_layer
-                        conv_idx = layer_index
+                    if layer_type in ["Conv2D", "DepthwiseConv2D", "Dense"]:
+                        primary_layer = model_layer
+                        primary_idx = layer_index
                     elif layer_type == "BatchNormalization":
                         bn_layer = model_layer
                         skip_layers.add(layer_index)
@@ -84,19 +84,19 @@ def apply_fusion_to_model(model, fusion_groups):
                     )
 
         # Perform fusion if we have the right layers
-        if conv_layer and bn_layer and conv_idx is not None:
+        if primary_layer and bn_layer and primary_idx is not None:
             log_info(
-                f"Fusing BatchNorm into {conv_layer.__class__.__name__} layer '{conv_layer.name}' (index {conv_idx})"
+                f"Fusing BatchNorm into {primary_layer.__class__.__name__} layer '{primary_layer.name}' (index {primary_idx})"
             )
-            fused_data = _fuse_conv_batchnorm(conv_layer, bn_layer, activation_layer)
-            fused_weights[conv_idx] = fused_data
-        elif conv_layer and activation_layer and conv_idx is not None:
+            fused_data = _fuse_layer_batchnorm(primary_layer, bn_layer, activation_layer)
+            fused_weights[primary_idx] = fused_data
+        elif primary_layer and activation_layer and primary_idx is not None:
             # Just activation fusion without BatchNorm
             log_info(
-                f"Fusing activation into {conv_layer.__class__.__name__} layer '{conv_layer.name}' (index {conv_idx})"
+                f"Fusing activation into {primary_layer.__class__.__name__} layer '{primary_layer.name}' (index {primary_idx})"
             )
             activation_name = activation_layer.get_config()["activation"]
-            fused_weights[conv_idx] = {"activation": activation_name}
+            fused_weights[primary_idx] = {"activation": activation_name}
 
     log_info(
         f"Fusion complete: {len(fused_weights)} layers with fused weights, {len(skip_layers)} layers to skip"
@@ -104,8 +104,8 @@ def apply_fusion_to_model(model, fusion_groups):
     return fused_weights, skip_layers
 
 
-def _fuse_conv_batchnorm(conv_layer, bn_layer, activation_layer=None):
-    """Fuse BatchNormalization into Conv layer weights"""
+def _fuse_layer_batchnorm(layer, bn_layer, activation_layer=None):
+    """Fuse BatchNormalization into Conv/Dense layer weights"""
     # Get BatchNorm parameters
     bn_weights = bn_layer.get_weights()
     gamma = bn_weights[0]  # Scale
@@ -114,11 +114,11 @@ def _fuse_conv_batchnorm(conv_layer, bn_layer, activation_layer=None):
     moving_variance = bn_weights[3]
     epsilon = bn_layer.epsilon
 
-    # Get Conv layer weights
-    conv_weights = conv_layer.get_weights()[0]
-    conv_bias = (
-        conv_layer.get_weights()[1]
-        if len(conv_layer.get_weights()) > 1
+    # Get layer weights
+    layer_weights = layer.get_weights()[0]
+    layer_bias = (
+        layer.get_weights()[1]
+        if len(layer.get_weights()) > 1
         else np.zeros(gamma.shape)
     )
 
@@ -127,27 +127,30 @@ def _fuse_conv_batchnorm(conv_layer, bn_layer, activation_layer=None):
     scale_factor = gamma * inv_std
 
     # Fuse weights: multiply each output channel by its scale factor
-    if conv_layer.__class__.__name__ == "Conv2D":
+    if layer.__class__.__name__ == "Conv2D":
         # Conv2D weights shape: (kernel_h, kernel_w, input_channels, output_channels)
-        fused_weights = conv_weights * scale_factor.reshape(1, 1, 1, -1)
-    elif conv_layer.__class__.__name__ == "DepthwiseConv2D":
+        fused_weights = layer_weights * scale_factor.reshape(1, 1, 1, -1)
+    elif layer.__class__.__name__ == "DepthwiseConv2D":
         # W: (kh, kw, in_ch, depth_multiplier)
-        in_ch = conv_weights.shape[2]
-        depth_mult = conv_weights.shape[3]
+        in_ch = layer_weights.shape[2]
+        depth_mult = layer_weights.shape[3]
         assert (
             scale_factor.size == in_ch * depth_mult
         ), "BN channels must match in_ch*depth_multiplier"
-        fused_weights = conv_weights * scale_factor.reshape(1, 1, in_ch, depth_mult)
+        fused_weights = layer_weights * scale_factor.reshape(1, 1, in_ch, depth_mult)
+    elif layer.__class__.__name__ == "Dense":
+        # Dense weights shape: (input_units, output_units)
+        fused_weights = layer_weights * scale_factor.reshape(1, -1)
     else:
-        raise ValueError(f"Unsupported layer type: {type(conv_layer)}")
+        raise ValueError(f"Unsupported layer type: {type(layer)}")
 
     # Fuse bias: The correct equation is derived from BatchNorm math:
-    # Original: y = gamma * (conv_out - mean) / sqrt(var + eps) + beta
-    # Where conv_out = W_conv * x + b_conv
-    # Expanding: y = gamma * (W_conv * x + b_conv - mean) / sqrt(var + eps) + beta
-    # Rearranging: y = (gamma / sqrt(var + eps)) * W_conv * x + gamma * (b_conv - mean) / sqrt(var + eps) + beta
-    # So: b_fused = gamma * (b_conv - mean) / sqrt(var + eps) + beta
-    fused_bias = gamma * (conv_bias - moving_mean) * inv_std + beta
+    # Original: y = gamma * (layer_out - mean) / sqrt(var + eps) + beta
+    # Where layer_out = W_layer * x + b_layer
+    # Expanding: y = gamma * (W_layer * x + b_layer - mean) / sqrt(var + eps) + beta
+    # Rearranging: y = (gamma / sqrt(var + eps)) * W_layer * x + gamma * (b_layer - mean) / sqrt(var + eps) + beta
+    # So: b_fused = gamma * (b_layer - mean) / sqrt(var + eps) + beta
+    fused_bias = gamma * (layer_bias - moving_mean) * inv_std + beta
 
     # Get activation
     activation_name = "linear"
@@ -185,9 +188,9 @@ def group_fuseable_layers(layers_data):
             # Check if this layer can be fused
             can_fuse = False
 
-            # Conv2D/DepthwiseConv2D + BatchNormalization fusion
+            # Conv2D/DepthwiseConv2D/Dense + BatchNormalization fusion
             if (
-                layer_type in ["Conv2D", "DepthwiseConv2D"]
+                layer_type in ["Conv2D", "DepthwiseConv2D", "Dense"]
                 and next_layer_type == "BatchNormalization"
             ):
                 can_fuse = True
@@ -396,7 +399,7 @@ def fuse_to_uph5_layer(model, fusion_groups):
             log_info(
                 f"Fusing BatchNorm into {primary_layer_type} in group {group_name}"
             )
-            fused_data = _fuse_conv_batchnorm(
+            fused_data = _fuse_layer_batchnorm(
                 primary_layer, batch_norm_layer, activation_layer
             )
             fused_layer["weight"] = fused_data["weights"]
