@@ -29,6 +29,7 @@ from .quantizer import (
     set_udl_shift_only_mode,
     calculate_weight_params,
     calculate_bias_params,
+    quantize_input_data_fp32_to_int16,
 )
 
 from .fuser import (
@@ -41,6 +42,7 @@ from .serializer import (
     serialize_uph5_metadata_to_json,
     serialize_uph5_weight_to_json,
     serialize_uph5_to_c_array,
+    serialize_input_feature_to_c_array,
 )
 
 from .quantization_analyzer import QuantizationAnalyzer
@@ -83,6 +85,10 @@ from .hardware import (
     UDL_SAFETY_MARGIN,
 )
 
+from .license import (
+    MLPERF_APACHE_LICENSE_HEADER,
+)
+
 __all__ = [
     # Config
     "DESCRIPTION_LENGTH", "TAG_LENGTH", "STRING_LENGTH",
@@ -96,6 +102,7 @@ __all__ = [
     # Quantizer
     "initialize_params", "set_udl_shift_only_mode",
     "calculate_weight_params", "calculate_bias_params",
+    "quantize_input_data_fp32_to_int16",
     "calculate_udl_power_of_2_scale",
 
     # Fuser
@@ -103,7 +110,7 @@ __all__ = [
 
     # Serializer
     "serialize_uph5_metadata_to_json", "serialize_uph5_weight_to_json",
-    "serialize_uph5_to_c_array",
+    "serialize_uph5_to_c_array", "serialize_input_feature_to_c_array",
 
     # Quantization
     "QuantizationAnalyzer", "QuantizationConfig", "UDLQuantizer",
@@ -122,4 +129,8 @@ __all__ = [
 
     # Hardware Specifications
     "UP301HardwareSpec", "INT16_RANGE", "UDL_MAX_SHIFT", "UDL_SAFETY_MARGIN",
+
+
+    # Licenses
+    "MLPERF_APACHE_LICENSE_HEADER",
 ]

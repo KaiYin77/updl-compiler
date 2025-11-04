@@ -6,6 +6,11 @@
 Backward-compatible quantizer interface using new modular classes.
 """
 
+from typing import Tuple
+
+import numpy as np
+
+from .hardware import INT16_MIN, INT16_MAX, INT16_RANGE
 from .quantization.config import QuantizationConfig
 from .quantization.udl_quantizer import UDLQuantizer
 from .quantization.parameter_calculator import (
@@ -130,3 +135,42 @@ def calculate_weight_params(weights=None, layer_name=None, layer_type=None, laye
 def calculate_bias_params(bias=None, layer_name=None, layer_type=None, layer_idx=None):
     """Calculate quantization parameters for layer bias"""
     return _global_quantizer.calculate_bias_params(bias, layer_name, layer_type, layer_idx)
+
+
+def quantize_input_data_fp32_to_int16(
+    features: np.ndarray,
+    scale: float,
+    zero_point: int = 0,
+    *,
+    return_overflow_count: bool = False,
+) -> np.ndarray | Tuple[np.ndarray, int]:
+    """
+    Quantize floating-point input features to int16 using symmetric quantization.
+
+    Args:
+        features: Floating-point tensor to quantize.
+        scale: Quantization scale.
+        zero_point: Quantization zero-point (defaults to 0 for symmetric quantization).
+        return_overflow_count: When True, also return the number of clipped
+            values that fell outside the int16 dynamic range.
+
+    Returns:
+        np.ndarray: Quantized int16 tensor with the same shape as `features`.
+        (np.ndarray, int): Tuple of quantized tensor and overflow count when
+            `return_overflow_count` is True.
+
+    Raises:
+        ValueError: If the quantization scale is zero.
+    """
+    if scale == 0.0:
+        raise ValueError("Quantization scale must be non-zero.")
+
+    scaled = features / scale + zero_point
+    quantized = np.round(scaled).astype(np.int64)
+    overflow_mask = (quantized < INT16_MIN) | (quantized > INT16_MAX)
+    overflow_count = int(np.count_nonzero(overflow_mask))
+    clipped = np.clip(quantized, INT16_MIN, INT16_MAX).astype(np.int16)
+
+    if return_overflow_count:
+        return clipped, overflow_count
+    return clipped

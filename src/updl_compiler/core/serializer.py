@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
+from typing import Optional, Sequence
 from .logger import (
     log_error,
     log_info,
@@ -28,6 +29,81 @@ from .serialize_util import (
 )
 import numpy as np
 import json
+from .license import MLPERF_APACHE_LICENSE_HEADER
+
+def serialize_input_feature_to_c_array(
+    quantized_samples: Sequence[np.ndarray],
+    labels: Sequence[str],
+    input_size: int,
+    *,
+    array_name: str = "g_model_inputs_int16",
+    element_type: str = "int16_t",
+    outer_dim_token: Optional[str] = None,
+    inner_dim_token: Optional[str] = None,
+    include_directive: Optional[str] = None,
+    license_header: str = MLPERF_APACHE_LICENSE_HEADER,
+    values_per_line: int = 16,
+) -> str:
+    """
+    Format quantized input samples into a C array definition suitable for tests.
+
+    Args:
+        quantized_samples: Collection of flattened int16 feature vectors.
+        labels: Labels used for per-sample comments (falls back to `sample_{i}`).
+        input_size: Expected length of each sample (validated for consistency).
+        array_name: Symbol name used in the emitted C code.
+        element_type: C type for array elements (defaults to `int16_t`).
+        outer_dim_token: Optional identifier for number of samples (defaults to literal).
+        inner_dim_token: Optional identifier for feature dimension (defaults to literal).
+        include_directive: Optional `#include` to insert before the array definition.
+        license_header: Optional license header prepended to the output.
+        values_per_line: Number of values emitted per row for readability.
+
+    Returns:
+        str: C source representation of the input feature array.
+
+    Raises:
+        ValueError: If no samples are provided or sample lengths are inconsistent.
+    """
+    samples = list(quantized_samples)
+    if not samples:
+        raise ValueError("No samples provided for input feature serialization.")
+
+    for idx, sample in enumerate(samples):
+        if sample.size != input_size:
+            raise ValueError(
+                f"Sample {idx} has size {sample.size}, expected {input_size}"
+            )
+
+    outer_dim = outer_dim_token or str(len(samples))
+    inner_dim = inner_dim_token or str(input_size)
+
+    lines: list[str] = []
+    if license_header:
+        lines.append(license_header.strip("\n"))
+        lines.append("")
+
+    if include_directive:
+        lines.append(include_directive)
+        lines.append("")
+
+    lines.append(
+        f"const {element_type} {array_name}[{outer_dim}][{inner_dim}] = {{"
+    )
+
+    for idx, sample in enumerate(samples):
+        label = labels[idx] if idx < len(labels) else f"sample_{idx}"
+        lines.append(f"    {{ // {label}")
+        for offset in range(0, input_size, values_per_line):
+            chunk = sample[offset : offset + values_per_line]
+            values = ", ".join(str(int(value)) for value in chunk)
+            trailing_comma = "," if offset + values_per_line < input_size else ""
+            lines.append(f"        {values}{trailing_comma}")
+        array_comma = "," if idx + 1 < len(samples) else ""
+        lines.append(f"    }}{array_comma}")
+
+    lines.append("};")
+    return "\n".join(lines) + "\n"
 
 
 def serialize_uph5_metadata_to_json(fused_data, output_file):
