@@ -16,9 +16,11 @@ scripts (e.g. keyword spotting, sound detection) can share the same workflow:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+import re
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Callable, Iterable, List, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Sequence, Tuple
 
 import numpy as np
 import tensorflow as tf
@@ -46,63 +48,42 @@ class GenerationConfig:
     include_directive: str | None = None
     output_header_path: Path | None = None
     header_guard: str | None = None
+    element_type: str = "int16_t"
+    header_includes: Tuple[str, ...] = ("#include <stdint.h>",)
+    values_per_line: int = 16
 
-
-def _camelize(identifier: str) -> str:
-    """Convert snake_case (or dash-separated) tokens into CamelCase."""
-    parts = identifier.replace("-", "_").split("_")
-    return "".join(part.capitalize() for part in parts if part)
-
-
-def build_config_with_tokens(
-    *,
-    base_dir: Path,
-    dataset_dir: Path,
-    model_token: str,
-    backend_token: str,
-    dtype_token: str,
-    dataset_name: str = "speech_commands",
-    sample_count: int = 20,
-    random_seed: int = 1234,
-    **overrides,
-) -> GenerationConfig:
+def load_layer_quant_params(path: Path) -> List[Tuple[str, List[str], Dict[str, float]]]:
     """
-    Construct a GenerationConfig using conventional naming patterns.
+    Load per-layer quantization parameters from a compiler cache JSON file.
 
-    This helper centralizes how example scripts derive file names, C identifiers,
-    and include directives from a handful of tokens. Callers can optionally
-    override any GenerationConfig field by passing keyword arguments.
+    Returns:
+        A list of tuples `(fusable_layer_name, op_names, params_dict)` in the
+        order they appear in the JSON. `op_names` preserves the metadata order,
+        and callers can choose which Keras layer to target. The params dict
+        includes `scale`, `zero_point`, `min_val`, and `max_val`.
     """
 
-    base_dir = base_dir.resolve()
-    model_token = model_token.strip()
-    backend_token = backend_token.strip()
-    dtype_token = dtype_token.strip()
+    data = json.loads(path.read_text())
+    layers: List[Tuple[str, List[str], Dict[str, float]]] = []
 
-    model_camel = _camelize(model_token)
-    output_dir = base_dir / backend_token
-    header_basename = f"{model_token}_mock_input_data_{dtype_token}.h"
+    for fusable_layer, ops in data["layers"].items():
+        op_order = list(ops.keys())
+        terminal_op = op_order[-1]
+        cfg = ops[terminal_op]
+        layers.append(
+            (
+                fusable_layer,
+                op_order,
+                {
+                    "scale": float(cfg["scale"]),
+                    "zero_point": int(cfg.get("zero_point", 0)),
+                    "min_val": float(cfg.get("min_val", 0.0)),
+                    "max_val": float(cfg.get("max_val", 0.0)),
+                },
+            )
+        )
 
-    config_kwargs = {
-        "dataset_dir": dataset_dir,
-        "quant_params_path": base_dir
-        / ".updlc_cache"
-        / f"{model_token}_{backend_token}_model_quantize_params.json",
-        "output_c_path": output_dir / f"{model_token}_test_input_data_{dtype_token}.c",
-        "dataset_name": dataset_name,
-        "sample_count": sample_count,
-        "random_seed": random_seed,
-        "array_name": f"g_{model_token}_inputs_{dtype_token}",
-        "outer_dim_token": f"kNum{model_camel}TestInputs",
-        "inner_dim_token": f"k{model_camel}InputSize",
-        "include_directive": f'#include "{header_basename}"',
-        "output_header_path": output_dir / header_basename,
-    }
-
-    if overrides:
-        config_kwargs.update(overrides)
-
-    return GenerationConfig(**config_kwargs)
+    return layers
 
 
 def load_input_scale_zero_point(config: GenerationConfig) -> Tuple[float, int]:
@@ -193,6 +174,133 @@ def quantize_features(
     return quantized_vectors, labels
 
 
+def list_capture_layers(
+    model: tf.keras.Model,
+    *,
+    skip_input_layers: bool = True,
+) -> List[tf.keras.layers.Layer]:
+    """Return an ordered list of layers suitable for activation capture."""
+
+    layers: List[tf.keras.layers.Layer] = []
+    for layer in model.layers:
+        if skip_input_layers and isinstance(layer, tf.keras.layers.InputLayer):
+            continue
+        layers.append(layer)
+    return layers
+
+
+def capture_layer_outputs(
+    model: tf.keras.Model,
+    features: np.ndarray,
+    target_layers: Sequence[str | tf.keras.layers.Layer],
+    *,
+    batch_size: int | None = None,
+) -> List[np.ndarray]:
+    """Run inference and return activations for the specified layers."""
+
+    resolved_layers: List[tf.keras.layers.Layer] = []
+    for layer_ref in target_layers:
+        if isinstance(layer_ref, tf.keras.layers.Layer):
+            resolved_layers.append(layer_ref)
+        else:
+            resolved_layers.append(model.get_layer(layer_ref))
+
+    capture_model = tf.keras.Model(
+        inputs=model.inputs,
+        outputs=[layer.output for layer in resolved_layers],
+        name="updl_activation_capture",
+    )
+    activations = capture_model.predict(
+        features,
+        batch_size=batch_size or features.shape[0],
+        verbose=0,
+    )
+    if not isinstance(activations, list):
+        activations = [activations]
+    return activations
+
+
+def format_float_array_to_c(
+    samples_2d: np.ndarray,
+    labels: Sequence[str],
+    array_name: str,
+    *,
+    values_per_line: int = 8,
+) -> str:
+    """Serialize flattened float32 activations into a C array string."""
+
+    sample_count, flat_size = samples_2d.shape
+    lines: List[str] = []
+    lines.append("// Generated activation data; values are float32.")
+    lines.append(f"const float {array_name}[{sample_count}][{flat_size}] = {{")
+
+    for idx, row in enumerate(samples_2d):
+        label = labels[idx] if idx < len(labels) else f"sample_{idx}"
+        lines.append(f"    {{ // {label}")
+        row_values = [f"{value:.8f}f" for value in row]
+        for offset in range(0, flat_size, values_per_line):
+            chunk = row_values[offset : offset + values_per_line]
+            trailing_comma = "," if offset + values_per_line < flat_size else ""
+            lines.append("        " + ", ".join(chunk) + trailing_comma)
+        comma = "," if idx + 1 < sample_count else ""
+        lines.append(f"    }}{comma}")
+
+    lines.append("};")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def prompt_layer_indices(
+    layer_names: Sequence[str],
+    *,
+    input_fn: Callable[[str], str] | None = None,
+    print_fn: Callable[[str], None] | None = None,
+    show_layer_list: bool = True,
+    prompt_text: str = "Selection: ",
+) -> List[int]:
+    """Prompt the user to choose layer indices."""
+
+    input_fn = input_fn or input
+    print_fn = print_fn or print
+
+    if show_layer_list:
+        print_fn("Available layers:")
+        for idx, name in enumerate(layer_names):
+            print_fn(f"  [{idx:02d}] {name}")
+
+    raw = input_fn(prompt_text).strip().lower()
+    if not raw or raw == "all":
+        return list(range(len(layer_names)))
+
+    indices: set[int] = set()
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if "-" in token:
+            start_str, end_str = token.split("-", 1)
+            try:
+                start = int(start_str)
+                end = int(end_str)
+            except ValueError as exc:  # pragma: no cover
+                raise ValueError(f"Invalid range '{token}'") from exc
+            if start > end:
+                start, end = end, start
+            for val in range(start, end + 1):
+                indices.add(val)
+        else:
+            try:
+                indices.add(int(token))
+            except ValueError as exc:  # pragma: no cover
+                raise ValueError(f"Invalid index '{token}'") from exc
+
+    for idx in indices:
+        if idx < 0 or idx >= len(layer_names):
+            raise ValueError(f"Index {idx} is out of bounds (0-{len(layer_names) - 1}).")
+
+    return sorted(indices)
+
+
 def write_c_array(
     config: GenerationConfig,
     quantized_samples: Sequence[np.ndarray],
@@ -200,8 +308,16 @@ def write_c_array(
     input_size: int,
     *,
     license_header: str | None = None,
+    element_type: str | None = None,
+    value_formatter: Callable[[float], str] | None = None,
+    values_per_line: int | None = None,
 ) -> Path:
     """Serialize quantized samples into a C source file."""
+    resolved_element_type = element_type or getattr(config, "element_type", "int16_t")
+    resolved_values_per_line = (
+        values_per_line or getattr(config, "values_per_line", 16)
+    )
+
     body = serialize_input_feature_to_c_array(
         quantized_samples,
         labels,
@@ -211,6 +327,9 @@ def write_c_array(
         inner_dim_token=config.inner_dim_token,
         include_directive=config.include_directive,
         license_header=license_header,
+        element_type=resolved_element_type,
+        value_formatter=value_formatter,
+        values_per_line=resolved_values_per_line,
     )
 
     output_path = config.output_c_path
@@ -227,8 +346,10 @@ def write_header_file(
     input_size: int,
     *,
     license_header: str | None = MLPERF_APACHE_LICENSE_HEADER,
+    element_type: str | None = None,
+    header_includes: Sequence[str] | None = None,
 ) -> Path:
-    """Create a header declaring the generated int16 input array."""
+    """Create a header declaring the generated input array."""
     if config.output_header_path is None:
         raise ValueError("output_header_path is not configured.")
 
@@ -241,6 +362,11 @@ def write_header_file(
     if not guard:
         guard = header_path.name.replace(".", "_").upper()
 
+    resolved_element_type = element_type or getattr(config, "element_type", "int16_t")
+    resolved_includes = header_includes or getattr(
+        config, "header_includes", ("#include <stdint.h>",)
+    )
+
     lines: list[str] = []
     if license_header:
         lines.append(license_header.strip("\n"))
@@ -249,8 +375,11 @@ def write_header_file(
     lines.append(f"#ifndef {guard}")
     lines.append(f"#define {guard}")
     lines.append("")
-    lines.append("#include <stdint.h>")
-    lines.append("")
+
+    includes = tuple(resolved_includes)
+    if includes:
+        lines.extend(includes)
+        lines.append("")
 
     if config.outer_dim_token:
         lines.append(f"#define {config.outer_dim_token} {sample_count}")
@@ -262,7 +391,7 @@ def write_header_file(
 
     lines.append("")
     lines.append(
-        f"extern const int16_t {config.array_name}[{outer}][{inner}];"
+        f"extern const {resolved_element_type} {config.array_name}[{outer}][{inner}];"
     )
     lines.append("")
     lines.append(f"#endif // {guard}")
@@ -270,3 +399,239 @@ def write_header_file(
 
     header_path.write_text("\n".join(lines), encoding="utf-8")
     return header_path
+
+
+def _sanitize_token(value: str) -> str:
+    """Return a C-friendly identifier token derived from the provided string."""
+    sanitized = re.sub(r"[^0-9A-Za-z_]", "_", value)
+    if sanitized and sanitized[0].isdigit():
+        sanitized = "_" + sanitized
+    return sanitized or "layer"
+
+
+def _camelize_token(value: str) -> str:
+    """Convert a sanitized identifier into CamelCase for macro generation."""
+    value = value.lstrip("_")
+    parts = [part for part in value.split("_") if part]
+    if not parts:
+        return "Layer"
+    return "".join(part.capitalize() for part in parts)
+
+
+def save_results(
+    layer_names: Sequence[str],
+    activations: Sequence[np.ndarray],
+    labels: Sequence[str],
+    *,
+    base_config: GenerationConfig,
+    output_dir: Path,
+    array_prefix: str,
+    outer_dim_token: str,
+    console: Any | None = None,
+    array_name_prefix: str | None = None,
+    array_name_suffix: str = "",
+    inner_dim_prefix: str = "k",
+    inner_dim_suffix: str = "FeatureSize",
+    header_includes: Sequence[str] | None = None,
+    element_type: str | None = None,
+    values_per_line: int | None = None,
+    include_header_template: str = "{base_name}.h",
+    header_guard_suffix: str = "_H",
+    license_header: str | None = None,
+) -> None:
+    """
+    Save layer activations to C source/header files using the provided config template.
+    """
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    resolved_element_type = element_type or getattr(base_config, "element_type", "int16_t")
+    resolved_values_per_line = values_per_line or getattr(base_config, "values_per_line", 16)
+    resolved_header_includes = (
+        tuple(header_includes) if header_includes is not None else getattr(base_config, "header_includes", ())
+    )
+
+    for layer_name, act in zip(layer_names, activations):
+        flattened = act.reshape(act.shape[0], -1).astype(np.float32)
+        safe_token = _sanitize_token(layer_name)
+        base_name = f"{array_prefix}_{safe_token}"
+
+        array_name_base = array_name_prefix or array_prefix
+        array_name = f"{array_name_base}_{safe_token}" if array_name_base else base_name
+        if array_name_suffix:
+            array_name = f"{array_name}{array_name_suffix}"
+
+        inner_dim_token = None
+        if inner_dim_prefix or inner_dim_suffix:
+            inner_dim_token = f"{inner_dim_prefix}{_camelize_token(safe_token)}{inner_dim_suffix}"
+
+        include_header_name = include_header_template.format(
+            base_name=base_name,
+            safe_token=safe_token,
+            layer_name=layer_name,
+        )
+        include_directive = f'#include "{include_header_name}"'
+
+        layer_config = replace(
+            base_config,
+            array_name=array_name,
+            output_c_path=output_dir / f"{base_name}.c",
+            output_header_path=output_dir / include_header_name,
+            include_directive=include_directive,
+            element_type=resolved_element_type,
+            header_includes=resolved_header_includes,
+            values_per_line=resolved_values_per_line,
+            outer_dim_token=outer_dim_token,
+            inner_dim_token=inner_dim_token,
+            header_guard=f"{_sanitize_token(base_name).upper()}{header_guard_suffix}",
+        )
+
+        flat_rows = [row for row in flattened]
+        input_size = flattened.shape[1]
+
+        output_path = write_c_array(
+            layer_config,
+            flat_rows,
+            labels,
+            input_size,
+            license_header=license_header,
+        )
+        header_path = write_header_file(
+            layer_config,
+            flattened.shape[0],
+            input_size,
+            license_header=license_header,
+        )
+
+        message = (
+            "  • Saved "
+            f"{output_path} and {header_path} "
+            f"(samples={flattened.shape[0]}, flat_size={flattened.shape[1]})"
+        )
+        if console is not None and hasattr(console, "print"):
+            console.print(message, style="green")
+        else:
+            print(message)
+
+
+def transform_activation_layout(activation: np.ndarray, layer_type: str, layout: str) -> np.ndarray:
+    """
+    Transform activation tensors between TensorFlow layout (NHWC) and UPDL layout (NCHW).
+
+    Args:
+        activation: Activation tensor from TensorFlow inference
+        layer_type: Type of the layer that produced this activation
+        layout: Either 'tf' for TensorFlow layout or 'updl' for UPDL layout
+
+    Returns:
+        Transformed activation tensor
+    """
+    if layout == 'tf':
+        # Return activation as-is for TensorFlow layout
+        return activation
+
+    # For UPDL layout, convert from NHWC (TensorFlow) to NCHW (C-optimized)
+    if len(activation.shape) == 4:  # 4D tensor: [batch, height, width, channels]
+        # Transform from NHWC to NCHW: [N, H, W, C] -> [N, C, H, W]
+        return np.transpose(activation, (0, 3, 1, 2))
+    elif len(activation.shape) == 3:  # 3D tensor: [batch, length, channels]
+        # Transform from NLC to NCL: [N, L, C] -> [N, C, L]
+        return np.transpose(activation, (0, 2, 1))
+    elif len(activation.shape) == 2:  # 2D tensor: [batch, features] - no change needed
+        return activation
+    else:
+        # For other dimensions, return as-is
+        return activation
+
+
+def requires_activation_layout_transform(layer_type: str) -> bool:
+    """
+    Check if a layer type produces activations that need layout transformation.
+
+    Args:
+        layer_type: The type of layer
+
+    Returns:
+        True if the layer produces spatial/channel activations that need NHWC->NCHW conversion
+    """
+    # Layers that produce spatial activations (need NHWC->NCHW conversion)
+    spatial_layers = [
+        'Conv1D', 'Conv2D', 'DepthwiseConv2D',
+        'MaxPooling2D', 'AveragePooling2D',
+        'BatchNormalization', 'Activation', 'Dropout'  # These inherit from previous spatial layers
+    ]
+    return layer_type in spatial_layers
+
+
+def find_major_computational_layer(model: tf.keras.Model, target_layer_index: int) -> str:
+    """
+    Find the major computational layer that influences the layout for a given layer.
+
+    Args:
+        model: The Keras model
+        target_layer_index: Index of the target layer
+
+    Returns:
+        The type of the major computational layer that should determine the layout
+    """
+    from ..core.schema.uph5 import LTYPE_LIST
+
+    layers = list_capture_layers(model)
+
+    # Major computational layer types are defined in UPH5 LTYPE_LIST
+    major_layer_types = LTYPE_LIST
+
+    # Dependent layer types that inherit layout from major layers
+    # These are layers not in LTYPE_LIST but commonly used in models
+    dependent_layer_types = ['BatchNormalization', 'Activation', 'Dropout']
+
+    target_layer = layers[target_layer_index]
+    target_layer_type = target_layer.__class__.__name__
+
+    # If the target layer is already a major computational layer, return its type
+    if target_layer_type in major_layer_types:
+        return target_layer_type
+
+    # If it's a dependent layer, look backwards to find the most recent major layer
+    if target_layer_type in dependent_layer_types:
+        for i in range(target_layer_index - 1, -1, -1):
+            prev_layer = layers[i]
+            prev_layer_type = prev_layer.__class__.__name__
+            if prev_layer_type in major_layer_types:
+                return prev_layer_type
+
+    # Default to the layer's own type if no major layer found
+    return target_layer_type
+
+
+def get_layer_layout_info(model: tf.keras.Model, layer_indices: List[int], layout: str) -> Dict[int, Dict[str, str]]:
+    """
+    Get layout information for selected layers, considering major computational layer dependencies.
+
+    Args:
+        model: The Keras model
+        layer_indices: List of selected layer indices
+        layout: Either 'tf' or 'updl'
+
+    Returns:
+        Dictionary mapping layer index to layout information
+    """
+    from ..core.schema.uph5 import WeightLayoutSpec
+
+    layers = list_capture_layers(model)
+    layout_info = {}
+
+    for idx in layer_indices:
+        layer = layers[idx]
+        layer_type = layer.__class__.__name__
+        major_layer_type = find_major_computational_layer(model, idx)
+
+        layout_info[idx] = {
+            'layer_name': layer.name,
+            'layer_type': layer_type,
+            'major_layer_type': major_layer_type,
+            'requires_transformation': WeightLayoutSpec.requires_transpose(major_layer_type, "kernel"),
+            'layout_format': layout
+        }
+
+    return layout_info

@@ -1,6 +1,6 @@
-#include "kws_mock_input_data_int16.h"
+#include "kws_test_inputs_int16.h"
 
-const int16_t g_kws_inputs_int16[kNumKwsTestInputs][kKwsInputSize] = {
+const int16_t g_kws_test_inputs_int16[kNumKwsTestInputs][kKwsInputSize] = {
     { // no
         -7370, 293, 663, 448, 326, 163, 154, -60, -88, 139, -7211, 233, 740, 210, 212, 41,
         184, 181, 269, -49, -7192, 223, 649, 300, 220, 17, 234, 225, 75, 78, -6995, 455,

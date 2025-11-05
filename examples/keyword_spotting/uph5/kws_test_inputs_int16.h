@@ -10,14 +10,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef KWS_MOCK_INPUT_DATA_INT16_H
-#define KWS_MOCK_INPUT_DATA_INT16_H
+#ifndef KWS_TEST_INPUTS_INT16_H
+#define KWS_TEST_INPUTS_INT16_H
 
 #include <stdint.h>
 
 #define kNumKwsTestInputs 20
 #define kKwsInputSize 490
 
-extern const int16_t g_kws_inputs_int16[kNumKwsTestInputs][kKwsInputSize];
+extern const int16_t g_kws_test_inputs_int16[kNumKwsTestInputs][kKwsInputSize];
 
-#endif // KWS_MOCK_INPUT_DATA_INT16_H
+#endif // KWS_TEST_INPUTS_INT16_H

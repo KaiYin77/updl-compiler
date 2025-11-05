@@ -9,7 +9,6 @@ from typing import List
 from kws_preprocessor import KWSPreprocessor, WORD_LABELS
 from updl_compiler.test import (
     GenerationConfig,
-    build_config_with_tokens,
     extract_labeled_features,
     load_input_scale_zero_point,
     quantize_features,
@@ -19,13 +18,25 @@ from updl_compiler.test import (
 )
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
+DATASET_DIR = Path("/home/kaiyin-upbeat/data")
+BACKEND_DIR = EXAMPLE_DIR / "uph5"
+ARRAY_NAME = "g_kws_test_inputs_int16"
+OUTER_DIM_TOKEN = "kNumKwsTestInputs"
+INNER_DIM_TOKEN = "kKwsInputSize"
 
-DEFAULT_CONFIG = build_config_with_tokens(
-    base_dir=EXAMPLE_DIR,
-    dataset_dir=Path("/home/kaiyin-upbeat/data"),
-    model_token="kws",
-    backend_token="uph5",
-    dtype_token="int16",
+DEFAULT_CONFIG = GenerationConfig(
+    dataset_dir=DATASET_DIR,
+    quant_params_path=EXAMPLE_DIR / ".updlc_cache" / "kws_uph5_model_quantize_params.json",
+    output_c_path=BACKEND_DIR / "kws_test_inputs_int16.c",
+    dataset_name="speech_commands",
+    sample_count=20,
+    random_seed=1234,
+    array_name=ARRAY_NAME,
+    outer_dim_token=OUTER_DIM_TOKEN,
+    inner_dim_token=INNER_DIM_TOKEN,
+    include_directive='#include "kws_test_inputs_int16.h"',
+    output_header_path=BACKEND_DIR / "kws_test_inputs_int16.h",
+    header_guard="KWS_TEST_INPUTS_INT16_H",
 )
 
 

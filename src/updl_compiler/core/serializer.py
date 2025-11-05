@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 from .logger import (
     log_error,
     log_info,
@@ -42,13 +42,14 @@ def serialize_input_feature_to_c_array(
     inner_dim_token: Optional[str] = None,
     include_directive: Optional[str] = None,
     license_header: str = MLPERF_APACHE_LICENSE_HEADER,
+    value_formatter: Optional[Callable[[float], str]] = None,
     values_per_line: int = 16,
 ) -> str:
     """
-    Format quantized input samples into a C array definition suitable for tests.
+    Format numeric input samples into a C array definition suitable for tests.
 
     Args:
-        quantized_samples: Collection of flattened int16 feature vectors.
+        quantized_samples: Collection of flattened numeric feature vectors.
         labels: Labels used for per-sample comments (falls back to `sample_{i}`).
         input_size: Expected length of each sample (validated for consistency).
         array_name: Symbol name used in the emitted C code.
@@ -65,7 +66,7 @@ def serialize_input_feature_to_c_array(
     Raises:
         ValueError: If no samples are provided or sample lengths are inconsistent.
     """
-    samples = list(quantized_samples)
+    samples = [np.asarray(sample) for sample in quantized_samples]
     if not samples:
         raise ValueError("No samples provided for input feature serialization.")
 
@@ -77,6 +78,26 @@ def serialize_input_feature_to_c_array(
 
     outer_dim = outer_dim_token or str(len(samples))
     inner_dim = inner_dim_token or str(input_size)
+
+    formatter: Callable[[float], str]
+    if value_formatter is not None:
+        formatter = value_formatter
+    else:
+        sample_dtype = next(
+            (sample.dtype for sample in samples if hasattr(sample, "dtype")), None
+        )
+        is_float_values = False
+        if sample_dtype is not None and np.issubdtype(sample_dtype, np.floating):
+            is_float_values = True
+        elif element_type and "float" in element_type:
+            is_float_values = True
+
+        if is_float_values:
+            def formatter(value: float) -> str:
+                return f"{float(value):.8f}f"
+        else:
+            def formatter(value: float) -> str:
+                return str(int(value))
 
     lines: list[str] = []
     if license_header:
@@ -96,7 +117,7 @@ def serialize_input_feature_to_c_array(
         lines.append(f"    {{ // {label}")
         for offset in range(0, input_size, values_per_line):
             chunk = sample[offset : offset + values_per_line]
-            values = ", ".join(str(int(value)) for value in chunk)
+            values = ", ".join(formatter(value) for value in chunk)
             trailing_comma = "," if offset + values_per_line < input_size else ""
             lines.append(f"        {values}{trailing_comma}")
         array_comma = "," if idx + 1 < len(samples) else ""
