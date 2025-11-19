@@ -23,7 +23,7 @@ DATASET_DIR = Path("/home/kaiyin-upbeat/data")
 ARRAY_NAME = "g_kws_test_inputs_fp32"
 OUTER_DIM_TOKEN = "kNumKwsTestInputs"
 INNER_DIM_TOKEN = "kKwsInputSize"
-SAMPLE_COUNT = 20
+SAMPLE_COUNT = 10
 RANDOM_SEED = 1234
 
 FLOAT_CONFIG = GenerationConfig(

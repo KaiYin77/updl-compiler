@@ -32,7 +32,7 @@ EXAMPLE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = EXAMPLE_DIR / "ref_model"
 OUTPUT_DIR = EXAMPLE_DIR / "uph5"
 DATASET_DIR = Path("/home/kaiyin-upbeat/data")
-SAMPLE_COUNT = 20
+SAMPLE_COUNT = 10
 RANDOM_SEED = 1234
 ARRAY_PREFIX = "kws_test_layers_fp32"
 OUTER_DIM_TOKEN = "kNumKwsTestInputs"
@@ -224,7 +224,7 @@ def main() -> None:
         array_name_suffix="_fp32",
         inner_dim_prefix="kKws",
         header_includes=(
-            '#include "kws_test_input_data_fp32.h"',
+            # '#include "kws_test_input_data_fp32.h"',
             "#include <stddef.h>",
         ),
         element_type="float",

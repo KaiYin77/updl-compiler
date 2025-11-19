@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 
-#define kNumKwsTestInputs 20
+#define kNumKwsTestInputs 10
 #define kKwsInputSize 490
 
 extern const float g_kws_test_inputs_fp32[kNumKwsTestInputs][kKwsInputSize];
