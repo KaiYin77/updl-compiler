@@ -131,8 +131,10 @@ def _build_ds_cnn(
         x = layers.Activation("relu")(x)
 
     x = layers.Dropout(rate=config.final_dropout)(x)
-    x = layers.GlobalAveragePooling2D()(x)
-    outputs = layers.Dense(settings["label_count"], activation="softmax")(x)
+    x = layers.AveragePooling2D(pool_size=(x.shape[1], x.shape[2]))(x)
+    x = layers.Flatten()(x)
+    x = layers.Dense(settings["label_count"])(x)
+    outputs = layers.Softmax()(x)
 
     return models.Model(inputs=inputs, outputs=outputs, name="kws_ds_cnn")
 

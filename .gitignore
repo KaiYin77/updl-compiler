@@ -11,3 +11,4 @@ wheels/
 .venv
 
 examples/*/.updlc_cache/
+examples/*/.updlc_cache.backup/
