@@ -13,7 +13,7 @@ import os
 import tensorflow as tf
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Dense, Activation, Flatten, BatchNormalization
-from tensorflow.keras.layers import Conv2D, AveragePooling2D, MaxPooling2D
+from tensorflow.keras.layers import Conv2D, AveragePooling2D, MaxPooling2D, Softmax
 from tensorflow.keras.regularizers import l2
 
 #define model
@@ -165,9 +165,9 @@ def resnet_v1_eembc():
     pool_size = int(np.amin(x.shape[1:3]))
     x = AveragePooling2D(pool_size=pool_size)(x)
     y = Flatten()(x)
-    outputs = Dense(num_classes,
-                    activation='softmax',
-                    kernel_initializer='he_normal')(y)
+    x = Dense(num_classes,
+              kernel_initializer='he_normal')(y)
+    outputs = Softmax()(x)
 
     # Instantiate model.
     model = Model(inputs=inputs, outputs=outputs)

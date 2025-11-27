@@ -22,6 +22,9 @@ from .generation import (
     requires_activation_layout_transform,
     find_major_computational_layer,
     get_layer_layout_info,
+    prompt_layout_selection,
+    collect_features_and_labels,
+    generate_test_inputs_fp32,
 )
 
 __all__ = [
@@ -42,4 +45,7 @@ __all__ = [
     "requires_activation_layout_transform",
     "find_major_computational_layer",
     "get_layer_layout_info",
+    "prompt_layout_selection",
+    "collect_features_and_labels",
+    "generate_test_inputs_fp32",
 ]

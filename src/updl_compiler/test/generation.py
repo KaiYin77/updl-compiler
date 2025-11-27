@@ -52,7 +52,10 @@ class GenerationConfig:
     header_includes: Tuple[str, ...] = ("#include <stdint.h>",)
     values_per_line: int = 16
 
-def load_layer_quant_params(path: Path) -> List[Tuple[str, List[str], Dict[str, float]]]:
+
+def load_layer_quant_params(
+    path: Path,
+) -> List[Tuple[str, List[str], Dict[str, float]]]:
     """
     Load per-layer quantization parameters from a compiler cache JSON file.
 
@@ -90,11 +93,15 @@ def load_input_scale_zero_point(config: GenerationConfig) -> Tuple[float, int]:
     """Return (scale, zero_point) from the compiler-generated JSON cache."""
     quant_config = QuantizationConfig()
     if not quant_config.load_params_from_json(str(config.quant_params_path)):
-        raise RuntimeError(f"Cannot load quantization params from {config.quant_params_path}")
+        raise RuntimeError(
+            f"Cannot load quantization params from {config.quant_params_path}"
+        )
 
     params = quant_config.get_input_params()
     if not params:
-        raise RuntimeError(f"No input quantization parameters found in {config.quant_params_path}")
+        raise RuntimeError(
+            f"No input quantization parameters found in {config.quant_params_path}"
+        )
 
     try:
         scale = float(params["scale"])
@@ -296,7 +303,9 @@ def prompt_layer_indices(
 
     for idx in indices:
         if idx < 0 or idx >= len(layer_names):
-            raise ValueError(f"Index {idx} is out of bounds (0-{len(layer_names) - 1}).")
+            raise ValueError(
+                f"Index {idx} is out of bounds (0-{len(layer_names) - 1})."
+            )
 
     return sorted(indices)
 
@@ -314,9 +323,7 @@ def write_c_array(
 ) -> Path:
     """Serialize quantized samples into a C source file."""
     resolved_element_type = element_type or getattr(config, "element_type", "int16_t")
-    resolved_values_per_line = (
-        values_per_line or getattr(config, "values_per_line", 16)
-    )
+    resolved_values_per_line = values_per_line or getattr(config, "values_per_line", 16)
 
     body = serialize_input_feature_to_c_array(
         quantized_samples,
@@ -445,10 +452,16 @@ def save_results(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    resolved_element_type = element_type or getattr(base_config, "element_type", "int16_t")
-    resolved_values_per_line = values_per_line or getattr(base_config, "values_per_line", 16)
+    resolved_element_type = element_type or getattr(
+        base_config, "element_type", "int16_t"
+    )
+    resolved_values_per_line = values_per_line or getattr(
+        base_config, "values_per_line", 16
+    )
     resolved_header_includes = (
-        tuple(header_includes) if header_includes is not None else getattr(base_config, "header_includes", ())
+        tuple(header_includes)
+        if header_includes is not None
+        else getattr(base_config, "header_includes", ())
     )
 
     for layer_name, act in zip(layer_names, activations):
@@ -463,7 +476,9 @@ def save_results(
 
         inner_dim_token = None
         if inner_dim_prefix or inner_dim_suffix:
-            inner_dim_token = f"{inner_dim_prefix}{_camelize_token(safe_token)}{inner_dim_suffix}"
+            inner_dim_token = (
+                f"{inner_dim_prefix}{_camelize_token(safe_token)}{inner_dim_suffix}"
+            )
 
         include_header_name = include_header_template.format(
             base_name=base_name,
@@ -514,7 +529,9 @@ def save_results(
             print(message)
 
 
-def transform_activation_layout(activation: np.ndarray, layer_type: str, layout: str) -> np.ndarray:
+def transform_activation_layout(
+    activation: np.ndarray, layer_type: str, layout: str
+) -> np.ndarray:
     """
     Transform activation tensors between TensorFlow layout (NHWC) and UPDL layout (NCHW).
 
@@ -526,7 +543,7 @@ def transform_activation_layout(activation: np.ndarray, layer_type: str, layout:
     Returns:
         Transformed activation tensor
     """
-    if layout == 'tf':
+    if layout == "tf":
         # Return activation as-is for TensorFlow layout
         return activation
 
@@ -556,14 +573,21 @@ def requires_activation_layout_transform(layer_type: str) -> bool:
     """
     # Layers that produce spatial activations (need NHWC->NCHW conversion)
     spatial_layers = [
-        'Conv1D', 'Conv2D', 'DepthwiseConv2D',
-        'MaxPooling2D', 'AveragePooling2D',
-        'BatchNormalization', 'Activation', 'Dropout'  # These inherit from previous spatial layers
+        "Conv1D",
+        "Conv2D",
+        "DepthwiseConv2D",
+        "MaxPooling2D",
+        "AveragePooling2D",
+        "BatchNormalization",
+        "Activation",
+        "Dropout",  # These inherit from previous spatial layers
     ]
     return layer_type in spatial_layers
 
 
-def find_major_computational_layer(model: tf.keras.Model, target_layer_index: int) -> str:
+def find_major_computational_layer(
+    model: tf.keras.Model, target_layer_index: int
+) -> str:
     """
     Find the major computational layer that influences the layout for a given layer.
 
@@ -583,7 +607,7 @@ def find_major_computational_layer(model: tf.keras.Model, target_layer_index: in
 
     # Dependent layer types that inherit layout from major layers
     # These are layers not in LTYPE_LIST but commonly used in models
-    dependent_layer_types = ['BatchNormalization', 'Activation', 'Dropout']
+    dependent_layer_types = ["BatchNormalization", "Activation", "Dropout"]
 
     target_layer = layers[target_layer_index]
     target_layer_type = target_layer.__class__.__name__
@@ -604,7 +628,9 @@ def find_major_computational_layer(model: tf.keras.Model, target_layer_index: in
     return target_layer_type
 
 
-def get_layer_layout_info(model: tf.keras.Model, layer_indices: List[int], layout: str) -> Dict[int, Dict[str, str]]:
+def get_layer_layout_info(
+    model: tf.keras.Model, layer_indices: List[int], layout: str
+) -> Dict[int, Dict[str, str]]:
     """
     Get layout information for selected layers, considering major computational layer dependencies.
 
@@ -627,11 +653,136 @@ def get_layer_layout_info(model: tf.keras.Model, layer_indices: List[int], layou
         major_layer_type = find_major_computational_layer(model, idx)
 
         layout_info[idx] = {
-            'layer_name': layer.name,
-            'layer_type': layer_type,
-            'major_layer_type': major_layer_type,
-            'requires_transformation': WeightLayoutSpec.requires_transpose(major_layer_type, "kernel"),
-            'layout_format': layout
+            "layer_name": layer.name,
+            "layer_type": layer_type,
+            "major_layer_type": major_layer_type,
+            "requires_transformation": WeightLayoutSpec.requires_transpose(
+                major_layer_type, "kernel"
+            ),
+            "layout_format": layout,
         }
 
     return layout_info
+
+
+def prompt_layout_selection(console=None) -> str:
+    """Prompt user to choose between TensorFlow and UPDL layout formats."""
+    layout_options = {
+        "tf": "TensorFlow native layout (HWIO weights, NHWC activations)",
+        "updl": "UPDL C-optimized layout (OIHW weights, NCHW activations)",
+    }
+
+    if console and hasattr(console, "print"):
+        console.print("\n[bold cyan]Available Layout Formats:[/]")
+        for key, description in layout_options.items():
+            console.print(f"  [bold]{key.upper()}[/]: {description}")
+    else:
+        print("\nAvailable Layout Formats:")
+        for key, description in layout_options.items():
+            print(f"  {key.upper()}: {description}")
+
+    while True:
+        if console and hasattr(console, "input"):
+            choice = (
+                console.input("\n[bold]Select layout format (tf/updl)[/]: ")
+                .strip()
+                .lower()
+            )
+        else:
+            choice = input("\nSelect layout format (tf/updl): ").strip().lower()
+
+        if choice in layout_options:
+            return choice
+        elif choice == "":
+            if console and hasattr(console, "print"):
+                console.print("[yellow]Defaulting to TensorFlow layout[/]")
+            else:
+                print("Defaulting to TensorFlow layout")
+            return "tf"
+        else:
+            error_msg = f"Invalid choice '{choice}'. Please enter 'tf' or 'updl'"
+            if console and hasattr(console, "print"):
+                console.print(f"[red]{error_msg}[/]")
+            else:
+                print(error_msg)
+
+
+def collect_features_and_labels(
+    layer_config: GenerationConfig, preprocessor: Any, label_extractor: LabelExtractor
+) -> Tuple[np.ndarray, List[str]]:
+    """
+    Sample TFDS data using the provided config and return float features + labels.
+
+    Args:
+        layer_config: Generation configuration
+        preprocessor: Domain-specific preprocessor instance
+        label_extractor: Function to extract label from sample dict
+
+    Returns:
+        Tuple of (features array, labels list)
+    """
+    raw_samples: List[dict] = sample_tfds_dataset(layer_config)
+    labeled_features = extract_labeled_features(
+        preprocessor.preprocess_sample,
+        raw_samples,
+        label_extractor,
+    )
+
+    features = np.concatenate([feat for _, feat in labeled_features], axis=0)
+    labels = [label for label, _ in labeled_features]
+    return features, labels
+
+
+def generate_test_inputs_fp32(
+    config: GenerationConfig,
+    preprocessor: Any,
+    label_extractor: LabelExtractor,
+    license_header: str | None = None,
+) -> Tuple[Path, Path]:
+    """
+    Generate float32 test inputs following the standard workflow.
+
+    Args:
+        config: Generation configuration with paths and parameters
+        preprocessor: Domain-specific preprocessor instance
+        label_extractor: Function to extract labels from samples
+        license_header: Optional license header for generated files
+
+    Returns:
+        Tuple of (output_path, header_path)
+    """
+    raw_samples: List[dict] = sample_tfds_dataset(config)
+    labeled_features = extract_labeled_features(
+        preprocessor.preprocess_sample,
+        raw_samples,
+        label_extractor,
+    )
+
+    if not labeled_features:
+        raise RuntimeError("No samples were collected; check dataset configuration.")
+
+    labels = []
+    flat_samples = []
+    for label, features in labeled_features:
+        labels.append(label)
+        flat_samples.append(features.astype("float32", copy=False).flatten())
+
+    input_size = flat_samples[0].size
+    if any(sample.size != input_size for sample in flat_samples[1:]):
+        raise RuntimeError("Float samples have inconsistent sizes.")
+
+    output_path = write_c_array(
+        config,
+        flat_samples,
+        labels,
+        input_size,
+        license_header=license_header,
+    )
+    header_path = write_header_file(
+        config,
+        len(flat_samples),
+        input_size,
+        license_header=license_header,
+    )
+
+    return output_path, header_path

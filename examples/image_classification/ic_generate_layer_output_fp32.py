@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright 2025 Upbeat, Inc
 # SPDX-License-Identifier: Apache-2.0
-"""Interactive CLI for exporting fp32 keyword spotting layer activations to C arrays."""
+"""Interactive CLI for exporting fp32 image classification layer activations to C arrays."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import tensorflow as tf
 from rich.console import Console
 from rich.table import Table
 
-from kws_preprocessor import KWSPreprocessor, WORD_LABELS
+from ic_preprocessor import ICPreprocessor, CIFAR10_LABELS
 from updl_compiler.test import (
     GenerationConfig,
     capture_layer_outputs,
@@ -30,11 +30,11 @@ from updl_compiler.test import (
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = EXAMPLE_DIR / "ref_model"
-DATASET_DIR = Path("/home/kaiyin-upbeat/data")
-SAMPLE_COUNT = 10
+DATASET_DIR = Path("/home/kaiyin-upbeat/data/cifar-10-batches-py")
+SAMPLE_COUNT = 5
 RANDOM_SEED = 1234
-ARRAY_PREFIX = "kws_test_layers_fp32"
-OUTER_DIM_TOKEN = "kNumKwsTestInputs"
+ARRAY_PREFIX = "ic_test_layers_fp32"
+OUTER_DIM_TOKEN = "kNumIcTestInputs"
 console = Console()
 
 
@@ -44,21 +44,21 @@ def create_layer_config(output_dir: Path) -> GenerationConfig:
         dataset_dir=DATASET_DIR,
         quant_params_path=EXAMPLE_DIR / ".updlc_cache" / "unused_fp32_params.json",
         output_c_path=output_dir / "unused.c",
-        dataset_name="speech_commands",
+        dataset_name="cifar10",
         sample_count=SAMPLE_COUNT,
         random_seed=RANDOM_SEED,
     )
 
 
-def kws_label_extractor(sample: dict) -> str:
+def ic_label_extractor(sample: dict) -> str:
     label_idx = int(sample["label"].numpy())
-    if 0 <= label_idx < len(WORD_LABELS):
-        return WORD_LABELS[label_idx].lower()
+    if 0 <= label_idx < len(CIFAR10_LABELS):
+        return CIFAR10_LABELS[label_idx].lower()
     return f"label_{label_idx}"
 
 
 def main() -> None:
-    console.rule("[bold green]KWS Layer Activation Exporter (fp32)")
+    console.rule("[bold green]IC Layer Activation Exporter (fp32)")
 
     # Interactive layout selection
     layout = prompt_layout_selection(console)
@@ -88,9 +88,9 @@ def main() -> None:
     layers = list_capture_layers(model)
     layer_names = [layer.name for layer in layers]
 
-    preprocessor = KWSPreprocessor()
+    preprocessor = ICPreprocessor()
     features, labels = collect_features_and_labels(
-        layer_config, preprocessor, kws_label_extractor
+        layer_config, preprocessor, ic_label_extractor
     )
     console.print(
         f"Loaded [bold]{features.shape[0]}[/] samples with feature shape [bold]{features.shape[1:]}[/]",
@@ -207,11 +207,11 @@ def main() -> None:
         array_prefix=ARRAY_PREFIX,
         outer_dim_token=OUTER_DIM_TOKEN,
         console=console,
-        array_name_prefix="g_kws",
+        array_name_prefix="g_ic",
         array_name_suffix="_fp32",
-        inner_dim_prefix="kKws",
+        inner_dim_prefix="kIc",
         header_includes=(
-            # '#include "kws_test_input_data_fp32.h"',
+            # '#include "ic_test_input_data_fp32.h"',
             "#include <stddef.h>",
         ),
         element_type="float",
