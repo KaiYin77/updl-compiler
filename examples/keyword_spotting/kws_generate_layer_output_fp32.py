@@ -30,7 +30,6 @@ from updl_compiler.test import (
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = EXAMPLE_DIR / "ref_model"
-OUTPUT_DIR = EXAMPLE_DIR / "uph5"
 DATASET_DIR = Path("/home/kaiyin-upbeat/data")
 SAMPLE_COUNT = 10
 RANDOM_SEED = 1234
@@ -38,14 +37,16 @@ ARRAY_PREFIX = "kws_test_layers_fp32"
 OUTER_DIM_TOKEN = "kNumKwsTestInputs"
 console = Console()
 
-LAYER_CONFIG = GenerationConfig(
-    dataset_dir=DATASET_DIR,
-    quant_params_path=EXAMPLE_DIR / ".updlc_cache" / "unused_fp32_params.json",
-    output_c_path=OUTPUT_DIR / "unused.c",
-    dataset_name="speech_commands",
-    sample_count=SAMPLE_COUNT,
-    random_seed=RANDOM_SEED,
-)
+def create_layer_config(output_dir: Path) -> GenerationConfig:
+    """Create layer configuration with dynamic output directory."""
+    return GenerationConfig(
+        dataset_dir=DATASET_DIR,
+        quant_params_path=EXAMPLE_DIR / ".updlc_cache" / "unused_fp32_params.json",
+        output_c_path=output_dir / "unused.c",
+        dataset_name="speech_commands",
+        sample_count=SAMPLE_COUNT,
+        random_seed=RANDOM_SEED,
+    )
 
 
 def kws_label_extractor(sample: dict) -> str:
@@ -79,10 +80,10 @@ def prompt_layout_selection() -> str:
 
 
 
-def collect_features_and_labels() -> tuple[np.ndarray, List[str]]:
-    """Sample TFDS data using the default config and return float features + labels."""
+def collect_features_and_labels(layer_config: GenerationConfig) -> tuple[np.ndarray, List[str]]:
+    """Sample TFDS data using the provided config and return float features + labels."""
     preprocessor = KWSPreprocessor()
-    raw_samples: List[dict] = sample_tfds_dataset(LAYER_CONFIG)
+    raw_samples: List[dict] = sample_tfds_dataset(layer_config)
     labeled_features = extract_labeled_features(
         preprocessor.preprocess_sample,
         raw_samples,
@@ -97,23 +98,34 @@ def collect_features_and_labels() -> tuple[np.ndarray, List[str]]:
 def main() -> None:
     console.rule("[bold green]KWS Layer Activation Exporter (fp32)")
 
+    # Interactive layout selection
+    layout = prompt_layout_selection()
+    console.print(
+        f"\nUsing [bold]{layout.upper()}[/] layout format",
+        style="cyan",
+    )
+
+    # Set output directory based on layout choice
+    if layout == "updl":
+        output_dir = EXAMPLE_DIR / "uph5"
+        console.print("Saving to [bold]uph5/[/] directory for UPDL layout", style="cyan")
+    else:
+        output_dir = EXAMPLE_DIR / "litert"
+        console.print("Saving to [bold]litert/[/] directory for TensorFlow layout", style="cyan")
+
+    # Create configuration with appropriate output directory
+    layer_config = create_layer_config(output_dir)
+
     # Load model
     model = tf.keras.models.load_model(MODEL_PATH)
 
     layers = list_capture_layers(model)
     layer_names = [layer.name for layer in layers]
 
-    features, labels = collect_features_and_labels()
+    features, labels = collect_features_and_labels(layer_config)
     console.print(
         f"Loaded [bold]{features.shape[0]}[/] samples with feature shape [bold]{features.shape[1:]}[/]",
         style="green",
-    )
-
-    # Interactive layout selection
-    layout = prompt_layout_selection()
-    console.print(
-        f"\nUsing [bold]{layout.upper()}[/] layout format",
-        style="cyan",
     )
 
     table = Table(title="Available Layers", show_lines=False)
@@ -215,8 +227,8 @@ def main() -> None:
         chosen_names,
         activations,
         labels,
-        base_config=LAYER_CONFIG,
-        output_dir=OUTPUT_DIR,
+        base_config=layer_config,
+        output_dir=output_dir,
         array_prefix=ARRAY_PREFIX,
         outer_dim_token=OUTER_DIM_TOKEN,
         console=console,
