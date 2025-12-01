@@ -636,6 +636,11 @@ def _write_layer_data_from_fused(f, layer_data, layer_type, layer_idx=0, all_lay
             weight_scale=layer_weight_scale, weight_zp=layer_weight_zp
         )
 
+    # Record whether this layer actually serializes a bias tensor
+    has_bias_flag = 1 if layer_data.get("bias") is not None else 0
+    write_tag(f, "has_bias", debug=False)
+    write_uint16(f, has_bias_flag, debug=False)
+
     if layer_data.get("bias") is not None:
         # Use precomputed bias quantization parameters from fusion step
         bias_scale = layer_data.get("bias_scale")
