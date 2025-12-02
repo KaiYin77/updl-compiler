@@ -786,3 +786,156 @@ def generate_test_inputs_fp32(
     )
 
     return output_path, header_path
+
+
+def load_quantization_params_from_uph5_metadata(metadata_file: Path) -> Dict[str, float] | None:
+    """Load input quantization parameters from UPH5 metadata JSON file."""
+    try:
+        if metadata_file.exists():
+            data = json.loads(metadata_file.read_text())
+            input_quant = data.get("model_info", {}).get("input_quantization", {})
+            if "scale" in input_quant and "zero_point" in input_quant:
+                return {
+                    "scale": float(input_quant["scale"]),
+                    "zero_point": int(input_quant["zero_point"])
+                }
+    except (json.JSONDecodeError, KeyError, ValueError):
+        pass
+    return None
+
+
+def prompt_quantization_cycle_choice(console=None) -> bool:
+    """Prompt user to choose whether to apply quantization cycle."""
+    if console and hasattr(console, "print"):
+        console.print("\n[bold cyan]Quantization Cycle Option[/]")
+        console.print("Do you want to apply fp32->int16->fp32 quantization cycle to input features?")
+        console.print("[dim]This simulates the quantization effects that would occur during inference.[/]")
+    else:
+        print("\nQuantization Cycle Option")
+        print("Do you want to apply fp32->int16->fp32 quantization cycle to input features?")
+        print("This simulates the quantization effects that would occur during inference.")
+
+    while True:
+        if console and hasattr(console, "input"):
+            choice = console.input("Apply quantization cycle? ([bold]y[/]/n): ").strip().lower()
+        else:
+            choice = input("Apply quantization cycle? (y/n): ").strip().lower()
+
+        if choice in ['y', 'yes', '']:
+            return True
+        elif choice in ['n', 'no']:
+            return False
+        else:
+            error_msg = "Please enter 'y' for yes or 'n' for no"
+            if console and hasattr(console, "print"):
+                console.print(f"[yellow]{error_msg}[/]")
+            else:
+                print(error_msg)
+
+
+def prompt_quantization_params(console=None, cache_dir: Path | str | None = None) -> Dict[str, float]:
+    """Prompt user for input quantization parameters, loading from UPH5 metadata if available."""
+
+    # Set up UPH5 metadata file path - try to find any UPH5 metadata file
+    if cache_dir:
+        cache_dir_path = Path(cache_dir) / ".updlc_cache"
+    else:
+        cache_dir_path = Path(".updlc_cache")
+
+    # Look for any UPH5 metadata file in the cache directory
+    uph5_metadata_path = None
+    if cache_dir_path.exists():
+        for file_path in cache_dir_path.glob("uph5_metadata_*_quantize_params.json"):
+            uph5_metadata_path = file_path
+            break
+
+    # Try to load parameters from UPH5 metadata
+    uph5_params = load_quantization_params_from_uph5_metadata(uph5_metadata_path) if uph5_metadata_path else None
+
+    if console and hasattr(console, "print"):
+        console.print("\n[bold yellow]Input Quantization Parameters[/]")
+        console.print("Enter quantization parameters for fp32->int16->fp32 conversion:")
+        if uph5_params:
+            console.print(f"[dim]Found in UPH5 metadata: scale={uph5_params['scale']}, zero_point={uph5_params['zero_point']}[/]")
+            console.print("[dim]Press Enter to use UPH5 values, or type new values:[/]")
+    else:
+        print("\nInput Quantization Parameters")
+        print("Enter quantization parameters for fp32->int16->fp32 conversion:")
+        if uph5_params:
+            print(f"Found in UPH5 metadata: scale={uph5_params['scale']}, zero_point={uph5_params['zero_point']}")
+            print("Press Enter to use UPH5 values, or type new values:")
+
+    try:
+        if console and hasattr(console, "input"):
+            scale_input = console.input(f"Scale: ").strip()
+            if not scale_input and uph5_params:
+                scale = uph5_params['scale']
+                zero_point = uph5_params['zero_point']
+                if console and hasattr(console, "print"):
+                    console.print(f"[green]Using UPH5 metadata values: scale={scale}, zero_point={zero_point}[/]")
+                else:
+                    print(f"Using UPH5 metadata values: scale={scale}, zero_point={zero_point}")
+            else:
+                zero_point_input = console.input("Zero point (e.g., 0): ").strip()
+                scale = float(scale_input)
+                zero_point = int(zero_point_input) if zero_point_input else 0
+        else:
+            scale_input = input(f"Scale: ").strip()
+            if not scale_input and uph5_params:
+                scale = uph5_params['scale']
+                zero_point = uph5_params['zero_point']
+                print(f"Using UPH5 metadata values: scale={scale}, zero_point={zero_point}")
+            else:
+                zero_point_input = input("Zero point (e.g., 0): ").strip()
+                scale = float(scale_input)
+                zero_point = int(zero_point_input) if zero_point_input else 0
+
+        return {"scale": scale, "zero_point": zero_point}
+
+    except (ValueError, KeyboardInterrupt) as e:
+        error_msg = f"Invalid input - {e}"
+        if console and hasattr(console, "print"):
+            console.print(f"[red]Error:[/] {error_msg}")
+        else:
+            print(f"Error: {error_msg}")
+        raise
+
+
+def quantize_fp32_to_int16(data: np.ndarray, scale: float, zero_point: int) -> np.ndarray:
+    """Quantize fp32 data to int16."""
+    # Quantize: q = round(x / scale) + zero_point
+    quantized = np.round(data / scale) + zero_point
+    # Clamp to int16 range
+    quantized = np.clip(quantized, -32768, 32767)
+    return quantized.astype(np.int16)
+
+
+def dequantize_int16_to_fp32(quantized_data: np.ndarray, scale: float, zero_point: int) -> np.ndarray:
+    """Dequantize int16 data back to fp32."""
+    # Dequantize: x = (q - zero_point) * scale
+    dequantized = (quantized_data.astype(np.float32) - zero_point) * scale
+    return dequantized
+
+
+def apply_quantization_cycle(data: np.ndarray, scale: float, zero_point: int, console=None) -> np.ndarray:
+    """Apply complete quantization cycle: fp32 -> int16 -> fp32."""
+    if console and hasattr(console, "print"):
+        console.print(f"  Original range: [{data.min():.6f}, {data.max():.6f}]", style="dim")
+    else:
+        print(f"  Original range: [{data.min():.6f}, {data.max():.6f}]")
+
+    # Step 1: fp32 -> int16
+    quantized = quantize_fp32_to_int16(data, scale, zero_point)
+    if console and hasattr(console, "print"):
+        console.print(f"  Quantized range: [{quantized.min()}, {quantized.max()}]", style="dim")
+    else:
+        print(f"  Quantized range: [{quantized.min()}, {quantized.max()}]")
+
+    # Step 2: int16 -> fp32
+    dequantized = dequantize_int16_to_fp32(quantized, scale, zero_point)
+    if console and hasattr(console, "print"):
+        console.print(f"  Dequantized range: [{dequantized.min():.6f}, {dequantized.max():.6f}]", style="dim")
+    else:
+        print(f"  Dequantized range: [{dequantized.min():.6f}, {dequantized.max():.6f}]")
+
+    return dequantized

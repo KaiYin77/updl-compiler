@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.table import Table
 
 from ic_preprocessor import ICPreprocessor, CIFAR10_LABELS
-from updl_compiler.test import (
+from updl_compiler.test.generation import (
     GenerationConfig,
     capture_layer_outputs,
     find_major_computational_layer,
@@ -26,6 +26,9 @@ from updl_compiler.test import (
     transform_activation_layout,
     prompt_layout_selection,
     collect_features_and_labels,
+    prompt_quantization_cycle_choice,
+    prompt_quantization_params,
+    apply_quantization_cycle,
 )
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
@@ -36,6 +39,8 @@ RANDOM_SEED = 1234
 ARRAY_PREFIX = "ic_test_layers_fp32"
 OUTER_DIM_TOKEN = "kNumIcTestInputs"
 console = Console()
+
+
 
 
 def create_layer_config(output_dir: Path) -> GenerationConfig:
@@ -96,6 +101,30 @@ def main() -> None:
         f"Loaded [bold]{features.shape[0]}[/] samples with feature shape [bold]{features.shape[1:]}[/]",
         style="green",
     )
+
+    # Ask user if they want to apply quantization cycle
+    apply_quantization = prompt_quantization_cycle_choice(console)
+
+    if apply_quantization:
+        # Prompt for quantization parameters
+        try:
+            quant_params = prompt_quantization_params(console, EXAMPLE_DIR)
+            console.print(
+                f"\nApplying quantization cycle to input data: scale={quant_params['scale']}, zero_point={quant_params['zero_point']}",
+                style="yellow",
+            )
+
+            # Apply fp32 -> int16 -> fp32 quantization cycle to input features
+            console.print("Processing input features through quantization cycle...", style="cyan")
+            features = apply_quantization_cycle(features, quant_params['scale'], quant_params['zero_point'], console)
+
+            console.print("✓ Input quantization cycle completed", style="green")
+
+        except (ValueError, KeyboardInterrupt):
+            console.print("[red]Error:[/] Invalid quantization parameters. Exiting.", style="red")
+            return
+    else:
+        console.print("[cyan]Skipping quantization cycle - using original fp32 features for layer outputs[/]", style="cyan")
 
     table = Table(title="Available Layers", show_lines=False)
     table.add_column("Index", style="cyan", justify="right")
