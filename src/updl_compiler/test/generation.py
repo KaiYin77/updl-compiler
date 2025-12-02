@@ -25,6 +25,7 @@ from typing import Any, Callable, Dict, Iterable, List, Sequence, Tuple
 import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
+from rich.console import Console
 
 from ..core.quantization import QuantizationConfig
 from ..core.quantizer import quantize_input_data_fp32_to_int16
@@ -51,6 +52,399 @@ class GenerationConfig:
     element_type: str = "int16_t"
     header_includes: Tuple[str, ...] = ("#include <stdint.h>",)
     values_per_line: int = 16
+
+
+# Model-Agnostic Test Generation Framework
+
+@dataclass
+class ModelConfig:
+    """Model-specific configuration for test generation."""
+    name: str                           # "ic", "kws", "vww"
+    display_name: str                   # "Image Classification"
+    preprocessor_class: type            # ICPreprocessor, KWSPreprocessor
+    label_extractor: Callable[[dict], str]  # ic_label_extractor, kws_label_extractor
+    dataset_name: str                   # "cifar10", "speech_commands"
+    dataset_dir: Path                   # Model-specific dataset path
+    sample_count: int = 5
+    random_seed: int = 1234
+    array_name_template: str = "g_{}_test_inputs_fp32"  # {} filled with name
+    outer_dim_token_template: str = "kNum{}TestInputs"  # {} filled with capitalized name
+    inner_dim_token_template: str = "k{}InputSize"      # {} filled with capitalized name
+    element_type: str = "float"
+    header_includes: Tuple[str, ...] = ("#include <stddef.h>",)
+    values_per_line: int = 8
+
+
+def create_model_config(model_type: str, **overrides) -> ModelConfig:
+    """Factory function for creating model configurations."""
+    base_configs = {
+        "ic": {
+            "name": "ic",
+            "display_name": "Image Classification",
+            "dataset_name": "cifar10",
+            "sample_count": 5,
+        },
+        "kws": {
+            "name": "kws",
+            "display_name": "Keyword Spotting",
+            "dataset_name": "speech_commands",
+            "sample_count": 10,
+        },
+        "vww": {
+            "name": "vww",
+            "display_name": "Visual Wake Words",
+            "dataset_name": "visual_wake_words",
+            "sample_count": 5,
+        }
+    }
+
+    if model_type not in base_configs:
+        raise ValueError(f"Unknown model type: {model_type}. Available: {list(base_configs.keys())}")
+
+    base = base_configs[model_type]
+
+    # Apply overrides
+    for key, value in overrides.items():
+        base[key] = value
+
+    # Create ModelConfig - required fields must be provided via overrides
+    return ModelConfig(**base)
+
+
+class TestInputGenerator:
+    """Model-agnostic test input generator."""
+
+    def __init__(self, model_config: ModelConfig, example_dir: Path):
+        self.config = model_config
+        self.example_dir = example_dir
+        self.console = Console()
+        self.generation_config = self._create_generation_config()
+
+    def generate_test_inputs(self) -> Tuple[Path, Path]:
+        """Main entry point - handles entire test input generation flow."""
+        self._show_header()
+        features, labels = self._load_features()
+
+        if self._should_apply_quantization():
+            features = self._apply_quantization_cycle(features)
+            feature_type = "quantized"
+        else:
+            feature_type = "original fp32"
+
+        return self._save_features(features, labels, feature_type)
+
+    def _create_generation_config(self) -> GenerationConfig:
+        """Create GenerationConfig from ModelConfig."""
+        name_cap = self.config.name.capitalize()  # "ic" -> "Ic"
+
+        return GenerationConfig(
+            dataset_dir=self.config.dataset_dir,
+            quant_params_path=self.example_dir / ".updlc_cache" / "unused_fp32_params.json",
+            output_c_path=self.example_dir / "uph5" / f"{self.config.name}_test_inputs_fp32.c",
+            dataset_name=self.config.dataset_name,
+            sample_count=self.config.sample_count,
+            random_seed=self.config.random_seed,
+            array_name=self.config.array_name_template.format(self.config.name),
+            outer_dim_token=self.config.outer_dim_token_template.format(name_cap),
+            inner_dim_token=self.config.inner_dim_token_template.format(name_cap),
+            include_directive=f'#include "{self.config.name}_test_inputs_fp32.h"',
+            output_header_path=self.example_dir / "uph5" / f"{self.config.name}_test_inputs_fp32.h",
+            header_guard=f"{self.config.name.upper()}_TEST_INPUTS_FP32_H",
+            element_type=self.config.element_type,
+            header_includes=self.config.header_includes,
+            values_per_line=self.config.values_per_line,
+        )
+
+    def _show_header(self) -> None:
+        """Display model-specific header."""
+        title = f"{self.config.display_name} Test Input Generator (fp32 with Quantization)"
+        self.console.rule(f"[bold green]{title}")
+
+    def _load_features(self) -> Tuple[np.ndarray, List[str]]:
+        """Load and preprocess features using model-specific preprocessor."""
+        preprocessor = self.config.preprocessor_class()
+        features, labels = collect_features_and_labels(
+            self.generation_config, preprocessor, self.config.label_extractor
+        )
+        self.console.print(
+            f"Loaded [bold]{features.shape[0]}[/] samples with feature shape [bold]{features.shape[1:]}[/]",
+            style="green",
+        )
+        return features, labels
+
+    def _should_apply_quantization(self) -> bool:
+        """Prompt user for quantization choice."""
+        return prompt_quantization_cycle_choice(self.console)
+
+    def _apply_quantization_cycle(self, features: np.ndarray) -> np.ndarray:
+        """Apply quantization cycle to features."""
+        try:
+            quant_params = prompt_quantization_params(self.console, self.example_dir)
+            self.console.print(
+                f"\nApplying quantization cycle: scale={quant_params['scale']}, zero_point={quant_params['zero_point']}",
+                style="yellow",
+            )
+
+            self.console.print("Processing input features through quantization cycle...", style="cyan")
+            quantized_features = apply_quantization_cycle(features, quant_params['scale'], quant_params['zero_point'], self.console)
+            self.console.print("✓ Input quantization cycle completed", style="green")
+
+            return quantized_features
+
+        except (ValueError, KeyboardInterrupt):
+            self.console.print("[red]Error:[/] Invalid quantization parameters. Exiting.", style="red")
+            raise
+
+    def _save_features(self, features: np.ndarray, labels: List[str], feature_type: str) -> Tuple[Path, Path]:
+        """Save processed features to C arrays."""
+        if feature_type == "original fp32":
+            self.console.print("[cyan]Skipping quantization cycle - using original fp32 features[/]", style="cyan")
+
+        # Prepare flat samples from features
+        flat_samples = [sample.flatten() for sample in features]
+        input_size = flat_samples[0].size
+
+        output_path = write_c_array(
+            self.generation_config,
+            flat_samples,
+            labels,
+            input_size,
+            license_header=None,
+        )
+
+        header_path = write_header_file(
+            self.generation_config,
+            len(flat_samples),
+            input_size,
+            license_header=None,
+        )
+
+        self.console.print(f"Wrote {self.generation_config.sample_count} {feature_type} samples to {output_path}", style="green")
+        self.console.print(f"Dataset directory: {self.generation_config.dataset_dir}", style="cyan")
+        self.console.print(f"Header written to {header_path}", style="green")
+
+        return output_path, header_path
+
+
+class LayerOutputGenerator:
+    """Model-agnostic layer output generator."""
+
+    def __init__(self, model_config: ModelConfig, example_dir: Path, model_path: Path):
+        self.config = model_config
+        self.example_dir = example_dir
+        self.model_path = model_path
+        self.console = Console()
+        self.generation_config = self._create_layer_config()
+
+    def generate_layer_outputs(self) -> None:
+        """Main entry point - handles entire layer output generation flow."""
+        self._show_header()
+        layout = self._prompt_layout_selection()
+        output_dir = self._get_output_directory(layout)
+
+        # Load model and features
+        model = tf.keras.models.load_model(self.model_path)
+        layers = list_capture_layers(model)
+        layer_names = [layer.name for layer in layers]
+
+        features, labels = self._load_features()
+
+        # Ask about quantization
+        if self._should_apply_quantization():
+            features = self._apply_quantization_cycle(features)
+
+        # Layer selection and processing
+        selected_indices = self._prompt_layer_selection(layer_names)
+        if not selected_indices:
+            self.console.print("No layers selected; exiting.", style="yellow")
+            return
+
+        chosen_layers = [layers[idx] for idx in selected_indices]
+        chosen_names = [layer.name for layer in chosen_layers]
+
+        self.console.print(
+            "\nGenerating outputs for: [bold]" + ", ".join(chosen_names) + "[/]",
+            style="cyan",
+        )
+
+        activations = capture_layer_outputs(model, features, chosen_layers)
+
+        # Handle layout transformations if needed
+        if layout == "updl":
+            activations = self._handle_updl_layout(model, selected_indices, chosen_layers, activations)
+
+        # Save results
+        save_results(
+            chosen_names,
+            activations,
+            labels,
+            base_config=self.generation_config,
+            output_dir=output_dir,
+            array_prefix=f"{self.config.name}_test_layers_fp32",
+            outer_dim_token=f"kNum{self.config.name.capitalize()}TestInputs",
+            console=self.console,
+            array_name_prefix=f"g_{self.config.name}",
+            array_name_suffix="_fp32",
+            inner_dim_prefix=f"k{self.config.name.capitalize()}",
+            header_includes=("#include <stddef.h>",),
+            element_type="float",
+            values_per_line=8,
+            license_header=None,
+        )
+
+    def _create_layer_config(self) -> GenerationConfig:
+        """Create GenerationConfig for layer output."""
+        return GenerationConfig(
+            dataset_dir=self.config.dataset_dir,
+            quant_params_path=self.example_dir / ".updlc_cache" / "unused_fp32_params.json",
+            output_c_path=self.example_dir / "unused.c",
+            dataset_name=self.config.dataset_name,
+            sample_count=self.config.sample_count,
+            random_seed=self.config.random_seed,
+        )
+
+    def _show_header(self) -> None:
+        """Display model-specific header."""
+        title = f"{self.config.display_name} Layer Activation Exporter (fp32)"
+        self.console.rule(f"[bold green]{title}")
+
+    def _prompt_layout_selection(self) -> str:
+        """Prompt user for layout selection."""
+        layout = prompt_layout_selection(self.console)
+        self.console.print(
+            f"\nUsing [bold]{layout.upper()}[/] layout format",
+            style="cyan",
+        )
+        return layout
+
+    def _get_output_directory(self, layout: str) -> Path:
+        """Get output directory based on layout choice."""
+        if layout == "updl":
+            output_dir = self.example_dir / "uph5"
+            self.console.print("Saving to [bold]uph5/[/] directory for UPDL layout", style="cyan")
+        else:
+            output_dir = self.example_dir / "litert"
+            self.console.print("Saving to [bold]litert/[/] directory for TensorFlow layout", style="cyan")
+        return output_dir
+
+    def _load_features(self) -> Tuple[np.ndarray, List[str]]:
+        """Load and preprocess features."""
+        preprocessor = self.config.preprocessor_class()
+        features, labels = collect_features_and_labels(
+            self.generation_config, preprocessor, self.config.label_extractor
+        )
+        self.console.print(
+            f"Loaded [bold]{features.shape[0]}[/] samples with feature shape [bold]{features.shape[1:]}[/]",
+            style="green",
+        )
+        return features, labels
+
+    def _should_apply_quantization(self) -> bool:
+        """Prompt user for quantization choice."""
+        return prompt_quantization_cycle_choice(self.console)
+
+    def _apply_quantization_cycle(self, features: np.ndarray) -> np.ndarray:
+        """Apply quantization cycle to features."""
+        try:
+            quant_params = prompt_quantization_params(self.console, self.example_dir)
+            self.console.print(
+                f"\nApplying quantization cycle to input data: scale={quant_params['scale']}, zero_point={quant_params['zero_point']}",
+                style="yellow",
+            )
+
+            self.console.print("Processing input features through quantization cycle...", style="cyan")
+            quantized_features = apply_quantization_cycle(features, quant_params['scale'], quant_params['zero_point'], self.console)
+            self.console.print("✓ Input quantization cycle completed", style="green")
+
+            return quantized_features
+
+        except (ValueError, KeyboardInterrupt):
+            self.console.print("[red]Error:[/] Invalid quantization parameters. Exiting.", style="red")
+            raise
+
+    def _prompt_layer_selection(self, layer_names: List[str]) -> List[int]:
+        """Prompt user to select layers."""
+        from rich.table import Table
+
+        table = Table(title="Available Layers", show_lines=False)
+        table.add_column("Index", style="cyan", justify="right")
+        table.add_column("Layer Name", style="magenta")
+        for idx, name in enumerate(layer_names):
+            table.add_row(f"{idx:02d}", name)
+        self.console.print(table)
+
+        try:
+            selected_indices = prompt_layer_indices(
+                layer_names,
+                input_fn=self.console.input,
+                print_fn=self.console.print,
+                show_layer_list=False,
+                prompt_text="[bold]Selection[/]: ",
+            )
+            return selected_indices
+        except ValueError as exc:
+            self.console.print(f"[red]Error:[/] {exc}")
+            return []
+
+    def _handle_updl_layout(self, model, selected_indices: List[int], chosen_layers: List, activations: List[np.ndarray]) -> List[np.ndarray]:
+        """Handle UPDL layout transformations."""
+        layout_info = get_layer_layout_info(model, selected_indices, "updl")
+
+        self.console.print("Analyzing UPDL layout requirements...", style="yellow")
+        for idx in selected_indices:
+            info = layout_info[idx]
+            layer_name = info["layer_name"]
+            layer_type = info["layer_type"]
+            major_layer_type = info["major_layer_type"]
+            requires_transformation = info["requires_transformation"]
+
+            if layer_type != major_layer_type:
+                if requires_transformation:
+                    self.console.print(
+                        f"  • {layer_name} ({layer_type}): Inherits {major_layer_type} UPDL layout",
+                        style="cyan",
+                    )
+                else:
+                    self.console.print(
+                        f"  • {layer_name} ({layer_type}): Follows {major_layer_type} (no transformation)",
+                        style="dim",
+                    )
+            else:
+                if requires_transformation:
+                    self.console.print(
+                        f"  • {layer_name} ({layer_type}): UPDL layout transformation required",
+                        style="green",
+                    )
+                else:
+                    self.console.print(
+                        f"  • {layer_name} ({layer_type}): No layout transformation needed",
+                        style="dim",
+                    )
+
+        # Transform activation layouts from TF (NHWC) to UPDL (NCHW)
+        self.console.print("Transforming activation layouts from NHWC to NCHW...", style="yellow")
+        transformed_activations = []
+
+        for i, (layer, activation) in enumerate(zip(chosen_layers, activations)):
+            major_layer_type = find_major_computational_layer(model, selected_indices[i])
+            needs_transform = requires_activation_layout_transform(major_layer_type)
+
+            if needs_transform:
+                original_shape = activation.shape
+                transformed_activation = transform_activation_layout(activation, major_layer_type, "updl")
+                self.console.print(
+                    f"  • {layer.name}: {original_shape} → {transformed_activation.shape} (NHWC→NCHW)",
+                    style="green",
+                )
+                transformed_activations.append(transformed_activation)
+            else:
+                self.console.print(
+                    f"  • {layer.name}: {activation.shape} (no transformation needed)",
+                    style="dim",
+                )
+                transformed_activations.append(activation)
+
+        return transformed_activations
 
 
 def load_layer_quant_params(
