@@ -123,7 +123,14 @@ class TestInputGenerator:
     def generate_test_inputs(self) -> Tuple[Path, Path]:
         """Main entry point - handles entire test input generation flow."""
         self._show_header()
+        layout = self._prompt_layout_selection()
+        output_dir = self._get_output_directory(layout)
+
         features, labels = self._load_features()
+
+        # Apply layout transformation if needed
+        if layout == "updl":
+            features = self._apply_layout_transformation(features)
 
         if self._should_apply_quantization():
             features = self._apply_quantization_cycle(features)
@@ -131,7 +138,7 @@ class TestInputGenerator:
         else:
             feature_type = "original fp32"
 
-        return self._save_features(features, labels, feature_type)
+        return self._save_features(features, labels, feature_type, output_dir, layout)
 
     def _create_generation_config(self) -> GenerationConfig:
         """Create GenerationConfig from ModelConfig."""
@@ -159,6 +166,51 @@ class TestInputGenerator:
         """Display model-specific header."""
         title = f"{self.config.display_name} Test Input Generator (fp32 with Quantization)"
         self.console.rule(f"[bold green]{title}")
+
+    def _prompt_layout_selection(self) -> str:
+        """Prompt user for layout selection."""
+        layout = prompt_layout_selection(self.console)
+        self.console.print(
+            f"\nUsing [bold]{layout.upper()}[/] layout format",
+            style="cyan",
+        )
+        return layout
+
+    def _get_output_directory(self, layout: str) -> Path:
+        """Get output directory based on layout choice."""
+        if layout == "updl":
+            output_dir = self.example_dir / "uph5"
+            self.console.print("Saving to [bold]uph5/[/] directory for UPDL layout", style="cyan")
+        else:
+            output_dir = self.example_dir / "litert"
+            self.console.print("Saving to [bold]litert/[/] directory for TensorFlow layout", style="cyan")
+        return output_dir
+
+    def _apply_layout_transformation(self, features: np.ndarray) -> np.ndarray:
+        """Transform input features from TensorFlow layout (NHWC) to UPDL layout (NCHW)."""
+        if len(features.shape) == 4:  # 4D tensor: [batch, height, width, channels]
+            # Transform from NHWC to NCHW: [N, H, W, C] -> [N, C, H, W]
+            transformed_features = np.transpose(features, (0, 3, 1, 2))
+            self.console.print(
+                f"Transformed input layout: {features.shape} → {transformed_features.shape} (NHWC→NCHW)",
+                style="green",
+            )
+            return transformed_features
+        elif len(features.shape) == 3:  # 3D tensor: [batch, length, channels]
+            # Transform from NLC to NCL: [N, L, C] -> [N, C, L]
+            transformed_features = np.transpose(features, (0, 2, 1))
+            self.console.print(
+                f"Transformed input layout: {features.shape} → {transformed_features.shape} (NLC→NCL)",
+                style="green",
+            )
+            return transformed_features
+        else:
+            # For 2D tensors (like Dense inputs) or other dimensions, no transformation needed
+            self.console.print(
+                f"Input shape {features.shape}: no layout transformation needed",
+                style="dim",
+            )
+            return features
 
     def _load_features(self) -> Tuple[np.ndarray, List[str]]:
         """Load and preprocess features using model-specific preprocessor."""
@@ -195,7 +247,7 @@ class TestInputGenerator:
             self.console.print("[red]Error:[/] Invalid quantization parameters. Exiting.", style="red")
             raise
 
-    def _save_features(self, features: np.ndarray, labels: List[str], feature_type: str) -> Tuple[Path, Path]:
+    def _save_features(self, features: np.ndarray, labels: List[str], feature_type: str, output_dir: Path, layout: str) -> Tuple[Path, Path]:
         """Save processed features to C arrays."""
         if feature_type == "original fp32":
             self.console.print("[cyan]Skipping quantization cycle - using original fp32 features[/]", style="cyan")
@@ -204,8 +256,11 @@ class TestInputGenerator:
         flat_samples = [sample.flatten() for sample in features]
         input_size = flat_samples[0].size
 
+        # Create layout-specific configuration
+        layout_config = self._create_layout_specific_config(output_dir, layout)
+
         output_path = write_c_array(
-            self.generation_config,
+            layout_config,
             flat_samples,
             labels,
             input_size,
@@ -213,17 +268,40 @@ class TestInputGenerator:
         )
 
         header_path = write_header_file(
-            self.generation_config,
+            layout_config,
             len(flat_samples),
             input_size,
             license_header=None,
         )
 
-        self.console.print(f"Wrote {self.generation_config.sample_count} {feature_type} samples to {output_path}", style="green")
-        self.console.print(f"Dataset directory: {self.generation_config.dataset_dir}", style="cyan")
+        layout_info = f"({layout.upper()} layout)" if layout == "updl" else "(TensorFlow layout)"
+        self.console.print(f"Wrote {layout_config.sample_count} {feature_type} samples to {output_path} {layout_info}", style="green")
+        self.console.print(f"Dataset directory: {layout_config.dataset_dir}", style="cyan")
         self.console.print(f"Header written to {header_path}", style="green")
 
         return output_path, header_path
+
+    def _create_layout_specific_config(self, output_dir: Path, layout: str) -> GenerationConfig:
+        """Create GenerationConfig with layout-specific paths."""
+        name_cap = self.config.name.capitalize()
+
+        return GenerationConfig(
+            dataset_dir=self.config.dataset_dir,
+            quant_params_path=self.example_dir / ".updlc_cache" / "unused_fp32_params.json",
+            output_c_path=output_dir / f"{self.config.name}_test_inputs_fp32.c",
+            dataset_name=self.config.dataset_name,
+            sample_count=self.config.sample_count,
+            random_seed=self.config.random_seed,
+            array_name=self.config.array_name_template.format(self.config.name),
+            outer_dim_token=self.config.outer_dim_token_template.format(name_cap),
+            inner_dim_token=self.config.inner_dim_token_template.format(name_cap),
+            include_directive=f'#include "{self.config.name}_test_inputs_fp32.h"',
+            output_header_path=output_dir / f"{self.config.name}_test_inputs_fp32.h",
+            header_guard=f"{self.config.name.upper()}_TEST_INPUTS_FP32_H",
+            element_type=self.config.element_type,
+            header_includes=self.config.header_includes,
+            values_per_line=self.config.values_per_line,
+        )
 
 
 class LayerOutputGenerator:
