@@ -3,3 +3,4 @@
 */.updlc_cache/
 */ref_model/
 *.tflite
+*/debug/*

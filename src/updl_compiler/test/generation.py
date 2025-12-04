@@ -327,10 +327,6 @@ class LayerOutputGenerator:
 
         features, labels = self._load_features()
 
-        # Ask about quantization
-        if self._should_apply_quantization():
-            features = self._apply_quantization_cycle(features)
-
         # Layer selection and processing
         selected_indices = self._prompt_layer_selection(layer_names)
         if not selected_indices:
@@ -345,7 +341,16 @@ class LayerOutputGenerator:
             style="cyan",
         )
 
-        activations = capture_layer_outputs(model, features, chosen_layers)
+        # Check if progressive quantization is requested
+        use_progressive_quant = self._prompt_progressive_quantization()
+
+        if use_progressive_quant:
+            # Generate activations with progressive quantization simulation
+            # This includes input + all selected layer quantization
+            activations = self._generate_progressive_quantized_activations(model, features, chosen_layers, selected_indices)
+        else:
+            # No quantization - pure fp32 flow throughout
+            activations = capture_layer_outputs(model, features, chosen_layers)
 
         # Handle layout transformations if needed
         if layout == "updl":
@@ -523,6 +528,431 @@ class LayerOutputGenerator:
                 transformed_activations.append(activation)
 
         return transformed_activations
+
+    def _prompt_progressive_quantization(self) -> bool:
+        """Prompt user for progressive quantization choice."""
+        if self.console and hasattr(self.console, "print"):
+            self.console.print("\n[bold cyan]Progressive Quantization Option[/]")
+            self.console.print("[dim]This approximate updl runtime int16 quantization effects.[/]")
+            self.console.print("[dim]Insert quantization at selected tf layer: input->quant->dequant->layer->output[/]")
+        else:
+            print("\nProgressive Quantization Option")
+            print("This approximate updl runtime int16 quantization effects.")
+            print("Insert quantization at selected tf layer: input->quant->dequant->layer->output")
+
+        while True:
+            if self.console and hasattr(self.console, "input"):
+                choice = self.console.input("Use progressive quantization? ([bold]y[/]/n): ").strip().lower()
+            else:
+                choice = input("Use progressive quantization? (y/n): ").strip().lower()
+
+            if choice in ['y', 'yes', '']:
+                return True
+            elif choice in ['n', 'no']:
+                return False
+            else:
+                error_msg = "Please enter 'y' for yes or 'n' for no"
+                if self.console and hasattr(self.console, "print"):
+                    self.console.print(f"[yellow]{error_msg}[/]")
+                else:
+                    print(error_msg)
+
+    def _generate_progressive_quantized_activations(self, model, features: np.ndarray,
+                                                   chosen_layers: List, selected_indices: List[int]) -> List[np.ndarray]:
+        """Generate activations with progressive quantization at each layer."""
+        self.console.print("\n[yellow]Generating activations with progressive quantization...[/]", style="cyan")
+
+        # Get ALL quantization parameters in one flow (input + layers)
+        input_params, layer_quant_params = self._load_all_quantization_params(chosen_layers, selected_indices)
+        if not input_params and not layer_quant_params:
+            self.console.print("[yellow]No quantization parameters provided. Falling back to standard activation capture[/]")
+            return capture_layer_outputs(model, features, chosen_layers)
+
+        # Build progressive model execution
+        all_layers = list_capture_layers(model)
+        activations = []
+        current_input = features
+
+        # Track which layers we need to capture
+        capture_set = set(selected_indices)
+
+        # Apply input quantization
+        if input_params:
+            scale, zero_point = input_params
+            self.console.print(
+                f"\nApplying input quantization cycle: scale={scale:.6f}, zero_point={zero_point}",
+                style="yellow"
+            )
+            current_input = apply_quantization_cycle(current_input, scale, zero_point, self.console)
+
+        # Simplified approach: Capture standard activations then apply quantization simulation
+        self.console.print("Capturing layer activations with quantization simulation...", style="cyan")
+
+        # First, get all the layer outputs using standard capture
+        standard_activations = capture_layer_outputs(model, current_input, chosen_layers)
+
+        # Now apply quantization cycle to each captured activation
+        quantized_activations = []
+        for i, (layer_idx, activation) in enumerate(zip(selected_indices, standard_activations)):
+            layer_name = chosen_layers[i].name
+
+            if layer_idx in layer_quant_params:
+                scale, zero_point = layer_quant_params[layer_idx]
+                self.console.print(
+                    f"  • Layer {layer_idx} ({layer_name}): Applying quant cycle (scale={scale:.6f}, zp={zero_point})",
+                    style="cyan"
+                )
+                quantized_activation = apply_quantization_cycle(activation, scale, zero_point, self.console)
+                quantized_activations.append(quantized_activation)
+            else:
+                self.console.print(
+                    f"  • Layer {layer_idx} ({layer_name}): No quantization params, using fp32 output",
+                    style="dim"
+                )
+                quantized_activations.append(activation)
+
+            self.console.print(
+                f"    → Processed activation shape: {quantized_activations[-1].shape}",
+                style="green"
+            )
+
+        return quantized_activations
+
+    def _load_all_quantization_params(self, chosen_layers: List, selected_indices: List[int]) -> Tuple[Tuple[float, int] | None, Dict[int, Tuple[float, int]]]:
+        """Prompt user for ALL quantization parameters in one unified flow."""
+        self.console.print("\n[bold cyan]Quantization Parameters[/]")
+        self.console.print("Enter quantization parameters from your UPH5 model:")
+        self.console.print("[dim]First input parameters, then each selected layer.[/]")
+
+        input_params = None
+        layer_params_dict = {}
+
+        # 1. INPUT QUANTIZATION PARAMETERS
+        self.console.print(f"\n[bold]Model Input Quantization[/]:")
+
+        # Try to load from cache first, then UPH5 metadata, then manual entry
+        input_params = self._get_input_params_with_caching()
+
+        # 2. LAYER QUANTIZATION PARAMETERS
+        layer_params_dict = self._get_layer_params_with_caching(chosen_layers, selected_indices)
+
+        if not input_params and not layer_params_dict:
+            self.console.print("[yellow]No quantization parameters provided.[/]")
+
+        return input_params, layer_params_dict
+
+    def _get_input_params_with_caching(self) -> Tuple[float, int] | None:
+        """Get input quantization parameters with caching support."""
+        cache_file = self.example_dir / ".updlc_cache" / "test_layer_quant_params.json"
+
+        # Try to load from cache first
+        cached_params = self._load_cached_input_params(cache_file)
+        if cached_params:
+            scale, zero_point = cached_params
+            self.console.print(f"[dim]Found cached input parameters: scale={scale:.6f}, zero_point={zero_point}[/]")
+
+            # Ask user if they want to use cached values
+            if self.console and hasattr(self.console, "input"):
+                choice = self.console.input("Use cached parameters? ([bold]y[/]/n/edit): ").strip().lower()
+            else:
+                choice = input("Use cached parameters? (y/n/edit): ").strip().lower()
+
+            if choice in ['y', 'yes', '']:
+                self.console.print(
+                    f"  → Using cached: scale={scale:.6f}, zero_point={zero_point}",
+                    style="green"
+                )
+                return (scale, zero_point)
+            elif choice == 'edit':
+                # Allow editing cached values
+                return self._edit_input_params(cached_params, cache_file)
+
+        # Try to load from UPH5 metadata
+        try:
+            uph5_params = prompt_quantization_params(self.console, self.example_dir)
+            input_params = (uph5_params['scale'], uph5_params['zero_point'])
+            self.console.print(
+                f"  → Using UPH5 metadata: scale={input_params[0]:.6f}, zero_point={input_params[1]}",
+                style="green"
+            )
+            # Save to cache for next time
+            self._save_input_params_to_cache(input_params, cache_file)
+            return input_params
+        except Exception:
+            self.console.print("[yellow]Could not load UPH5 metadata. Please enter manually:[/]")
+            return self._prompt_manual_input_params(cache_file)
+
+    def _load_cached_input_params(self, cache_file: Path) -> Tuple[float, int] | None:
+        """Load input quantization parameters from unified cache file."""
+        try:
+            if cache_file.exists():
+                import json
+                data = json.loads(cache_file.read_text())
+                if 'input_params' in data:
+                    input_data = data['input_params']
+                    return (float(input_data['scale']), int(input_data['zero_point']))
+        except Exception:
+            pass
+        return None
+
+    def _save_input_params_to_cache(self, params: Tuple[float, int], cache_file: Path) -> None:
+        """Save input quantization parameters to unified cache file."""
+        try:
+            import json
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Load existing data or create new
+            existing_data = {}
+            if cache_file.exists():
+                try:
+                    existing_data = json.loads(cache_file.read_text())
+                except:
+                    existing_data = {}
+
+            # Update input parameters section
+            existing_data['input_params'] = {
+                'scale': params[0],
+                'zero_point': params[1]
+            }
+            existing_data['_timestamp'] = str(Path(__file__).stat().st_mtime)
+
+            cache_file.write_text(json.dumps(existing_data, indent=2))
+            self.console.print(f"[dim]Saved input parameters to cache: {cache_file.name}[/]")
+        except Exception as e:
+            self.console.print(f"[yellow]Warning: Could not save input params to cache: {e}[/]")
+
+    def _edit_input_params(self, cached_params: Tuple[float, int], cache_file: Path) -> Tuple[float, int] | None:
+        """Allow user to edit cached parameters."""
+        old_scale, old_zero_point = cached_params
+        try:
+            if self.console and hasattr(self.console, "input"):
+                scale_input = self.console.input(f"  Scale (current: {old_scale:.6f}): ").strip()
+                zero_point_input = self.console.input(f"  Zero point (current: {old_zero_point}): ").strip()
+            else:
+                scale_input = input(f"  Scale (current: {old_scale:.6f}): ").strip()
+                zero_point_input = input(f"  Zero point (current: {old_zero_point}): ").strip()
+
+            # Use current values if no new input provided
+            scale = float(scale_input) if scale_input else old_scale
+            zero_point = int(zero_point_input) if zero_point_input else old_zero_point
+
+            new_params = (scale, zero_point)
+            self.console.print(
+                f"  → Updated parameters: scale={scale:.6f}, zero_point={zero_point}",
+                style="green"
+            )
+
+            # Save updated values to cache
+            self._save_input_params_to_cache(new_params, cache_file)
+            return new_params
+
+        except (ValueError, KeyboardInterrupt) as e:
+            self.console.print(f"[red]Error:[/] Invalid input - {e}")
+            self.console.print("[yellow]Using original cached values.[/]")
+            return cached_params
+
+    def _prompt_manual_input_params(self, cache_file: Path) -> Tuple[float, int] | None:
+        """Prompt for manual input of quantization parameters."""
+        try:
+            if self.console and hasattr(self.console, "input"):
+                scale_input = self.console.input("  Scale: ").strip()
+                zero_point_input = self.console.input("  Zero point (default 0): ").strip()
+            else:
+                scale_input = input("  Scale: ").strip()
+                zero_point_input = input("  Zero point (default 0): ").strip()
+
+            if scale_input:
+                scale = float(scale_input)
+                zero_point = int(zero_point_input) if zero_point_input else 0
+                input_params = (scale, zero_point)
+                self.console.print(
+                    f"  → Set parameters: scale={scale:.6f}, zero_point={zero_point}",
+                    style="green"
+                )
+                # Save to cache for next time
+                self._save_input_params_to_cache(input_params, cache_file)
+                return input_params
+            else:
+                self.console.print("[yellow]No input scale provided. Skipping input quantization.[/]")
+                return None
+
+        except (ValueError, KeyboardInterrupt) as e:
+            self.console.print(f"[red]Error:[/] Invalid input - {e}")
+            self.console.print("[yellow]Skipping input quantization.[/]")
+            return None
+
+    def _get_layer_params_with_caching(self, chosen_layers: List, selected_indices: List[int]) -> Dict[int, Tuple[float, int]]:
+        """Get layer quantization parameters with caching support."""
+        cache_file = self.example_dir / ".updlc_cache" / "test_layer_quant_params.json"
+
+        # Try to load from cache first
+        cached_layer_params = self._load_cached_layer_params(cache_file, selected_indices, chosen_layers)
+        if cached_layer_params:
+            self.console.print(f"[dim]Found cached layer parameters for {len(cached_layer_params)} layers[/]")
+
+            # Show cached parameters
+            self.console.print("[bold]Cached Layer Parameters:[/]")
+            for layer_idx in selected_indices:
+                if layer_idx in cached_layer_params:
+                    scale, zero_point = cached_layer_params[layer_idx]
+                    layer_name = next(layer.name for idx, layer in zip(selected_indices, chosen_layers) if idx == layer_idx)
+                    self.console.print(f"  Layer {layer_idx} ({layer_name}): scale={scale:.6f}, zero_point={zero_point}")
+
+            # Ask user if they want to use cached values
+            if self.console and hasattr(self.console, "input"):
+                choice = self.console.input("Use cached layer parameters? ([bold]y[/]/n/edit): ").strip().lower()
+            else:
+                choice = input("Use cached layer parameters? (y/n/edit): ").strip().lower()
+
+            if choice in ['y', 'yes', '']:
+                self.console.print("  → Using all cached layer parameters", style="green")
+                return cached_layer_params
+            elif choice == 'edit':
+                return self._edit_layer_params(cached_layer_params, chosen_layers, selected_indices, cache_file)
+
+        # No cache or user chose not to use it - prompt for all parameters
+        return self._prompt_all_layer_params(chosen_layers, selected_indices, cache_file)
+
+    def _load_cached_layer_params(self, cache_file: Path, selected_indices: List[int], chosen_layers: List) -> Dict[int, Tuple[float, int]]:
+        """Load layer quantization parameters from unified cache file."""
+        try:
+            if cache_file.exists():
+                import json
+                data = json.loads(cache_file.read_text())
+
+                # Check if we have layer parameters section
+                if 'layer_params' not in data:
+                    return {}
+
+                layer_data = data['layer_params']
+
+                # Check if we have all required layers in cache
+                cached_params = {}
+                for layer_idx, layer in zip(selected_indices, chosen_layers):
+                    layer_key = f"layer_{layer_idx}_{layer.name}"
+                    if layer_key in layer_data:
+                        params = layer_data[layer_key]
+                        cached_params[layer_idx] = (float(params['scale']), int(params['zero_point']))
+
+                # Return cached params only if we have ALL selected layers
+                if len(cached_params) == len(selected_indices):
+                    return cached_params
+        except Exception:
+            pass
+        return {}
+
+    def _save_layer_params_to_cache(self, layer_params: Dict[int, Tuple[float, int]], chosen_layers: List, selected_indices: List[int], cache_file: Path) -> None:
+        """Save layer quantization parameters to unified cache file."""
+        try:
+            import json
+
+            # Load existing cache or start fresh
+            existing_data = {}
+            if cache_file.exists():
+                try:
+                    existing_data = json.loads(cache_file.read_text())
+                except:
+                    existing_data = {}
+
+            # Ensure layer_params section exists
+            if 'layer_params' not in existing_data:
+                existing_data['layer_params'] = {}
+
+            # Update with new layer parameters
+            for layer_idx, (scale, zero_point) in layer_params.items():
+                layer_name = next(layer.name for idx, layer in zip(selected_indices, chosen_layers) if idx == layer_idx)
+                layer_key = f"layer_{layer_idx}_{layer_name}"
+                existing_data['layer_params'][layer_key] = {
+                    'scale': scale,
+                    'zero_point': zero_point,
+                    'layer_name': layer_name,
+                    'layer_index': layer_idx
+                }
+
+            # Add timestamp
+            existing_data['_timestamp'] = str(Path(__file__).stat().st_mtime)
+
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text(json.dumps(existing_data, indent=2))
+            self.console.print(f"[dim]Saved layer parameters to cache: {cache_file.name}[/]")
+        except Exception as e:
+            self.console.print(f"[yellow]Warning: Could not save layer params to cache: {e}[/]")
+
+    def _edit_layer_params(self, cached_params: Dict[int, Tuple[float, int]], chosen_layers: List, selected_indices: List[int], cache_file: Path) -> Dict[int, Tuple[float, int]]:
+        """Allow user to edit cached layer parameters."""
+        updated_params = {}
+
+        for layer_idx, layer in zip(selected_indices, chosen_layers):
+            if layer_idx in cached_params:
+                old_scale, old_zero_point = cached_params[layer_idx]
+                self.console.print(f"\n[bold]Layer {layer_idx} ({layer.name})[/]:")
+
+                try:
+                    if self.console and hasattr(self.console, "input"):
+                        scale_input = self.console.input(f"  Scale (current: {old_scale:.6f}): ").strip()
+                        zero_point_input = self.console.input(f"  Zero point (current: {old_zero_point}): ").strip()
+                    else:
+                        scale_input = input(f"  Scale (current: {old_scale:.6f}): ").strip()
+                        zero_point_input = input(f"  Zero point (current: {old_zero_point}): ").strip()
+
+                    # Use current values if no new input provided
+                    scale = float(scale_input) if scale_input else old_scale
+                    zero_point = int(zero_point_input) if zero_point_input else old_zero_point
+
+                    updated_params[layer_idx] = (scale, zero_point)
+                    self.console.print(
+                        f"  → Updated: scale={scale:.6f}, zero_point={zero_point}",
+                        style="green"
+                    )
+
+                except (ValueError, KeyboardInterrupt) as e:
+                    self.console.print(f"[red]Error:[/] Invalid input - {e}")
+                    self.console.print("[yellow]Using original cached values.[/]")
+                    updated_params[layer_idx] = cached_params[layer_idx]
+
+        # Save updated parameters
+        self._save_layer_params_to_cache(updated_params, chosen_layers, selected_indices, cache_file)
+        return updated_params
+
+    def _prompt_all_layer_params(self, chosen_layers: List, selected_indices: List[int], cache_file: Path) -> Dict[int, Tuple[float, int]]:
+        """Prompt user for all layer quantization parameters."""
+        layer_params_dict = {}
+
+        for i, (layer_idx, layer) in enumerate(zip(selected_indices, chosen_layers)):
+            self.console.print(f"\n[bold]Layer {layer_idx} ({layer.name})[/]:")
+
+            try:
+                if self.console and hasattr(self.console, "input"):
+                    scale_input = self.console.input(f"  Scale: ").strip()
+                    zero_point_input = self.console.input(f"  Zero point (default 0): ").strip()
+                else:
+                    scale_input = input(f"  Scale: ").strip()
+                    zero_point_input = input(f"  Zero point (default 0): ").strip()
+
+                if not scale_input:
+                    self.console.print("[yellow]Skipping quantization for this layer (no scale provided)[/]")
+                    continue
+
+                scale = float(scale_input)
+                zero_point = int(zero_point_input) if zero_point_input else 0
+
+                layer_params_dict[layer_idx] = (scale, zero_point)
+
+                self.console.print(
+                    f"  → Set parameters: scale={scale:.6f}, zero_point={zero_point}",
+                    style="green"
+                )
+
+            except (ValueError, KeyboardInterrupt) as e:
+                self.console.print(f"[red]Error:[/] Invalid input - {e}")
+                self.console.print("[yellow]Skipping quantization for this layer[/]")
+                continue
+
+        # Save to cache if we got any parameters
+        if layer_params_dict:
+            self._save_layer_params_to_cache(layer_params_dict, chosen_layers, selected_indices, cache_file)
+
+        return layer_params_dict
 
 
 def load_layer_quant_params(
