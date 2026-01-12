@@ -1483,6 +1483,7 @@ def requires_activation_layout_transform(layer_type: str) -> bool:
         "BatchNormalization",
         "Activation",
         "Dropout",  # These inherit from previous spatial layers
+        "Add",  # Inherits layout from input layers
     ]
     return layer_type in spatial_layers
 
@@ -1544,8 +1545,6 @@ def get_layer_layout_info(
     Returns:
         Dictionary mapping layer index to layout information
     """
-    from ..core.schema.uph5 import WeightLayoutSpec
-
     layers = list_capture_layers(model)
     layout_info = {}
 
@@ -1558,8 +1557,8 @@ def get_layer_layout_info(
             "layer_name": layer.name,
             "layer_type": layer_type,
             "major_layer_type": major_layer_type,
-            "requires_transformation": WeightLayoutSpec.requires_transpose(
-                major_layer_type, "kernel"
+            "requires_transformation": requires_activation_layout_transform(
+                major_layer_type
             ),
             "layout_format": layout,
         }
