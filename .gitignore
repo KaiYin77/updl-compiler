@@ -12,3 +12,5 @@ wheels/
 
 examples/*/.updlc_cache/
 examples/*/.updlc_cache.backup/
+
+references/

@@ -59,11 +59,11 @@ class GenerationConfig:
 @dataclass
 class ModelConfig:
     """Model-specific configuration for test generation."""
-    name: str                           # "ic", "kws", "vww"
+    name: str                           # "ic", "kws", "vww", "danet"
     display_name: str                   # "Image Classification"
-    preprocessor_class: type            # ICPreprocessor, KWSPreprocessor
+    preprocessor_class: type            # ICPreprocessor, KWSPreprocessor, DANetPreprocessor
     label_extractor: Callable[[dict], str]  # ic_label_extractor, kws_label_extractor
-    dataset_name: str                   # "cifar10", "speech_commands"
+    dataset_name: str                   # "cifar10", "speech_commands", "imu_data"
     dataset_dir: Path                   # Model-specific dataset path
     sample_count: int = 5
     random_seed: int = 1234
@@ -73,6 +73,7 @@ class ModelConfig:
     element_type: str = "float"
     header_includes: Tuple[str, ...] = ("#include <stddef.h>",)
     values_per_line: int = 8
+    data_loader: Callable[[Path, int, int], List[dict]] | None = None  # Custom data loader for non-TFDS datasets
 
 
 def create_model_config(model_type: str, **overrides) -> ModelConfig:
@@ -95,6 +96,12 @@ def create_model_config(model_type: str, **overrides) -> ModelConfig:
             "display_name": "Visual Wake Words",
             "dataset_name": "visual_wake_words",
             "sample_count": 5,
+        },
+        "danet": {
+            "name": "danet",
+            "display_name": "Dynamic Adaptive Network",
+            "dataset_name": "imu_data",
+            "sample_count": 1,
         }
     }
 
@@ -216,7 +223,7 @@ class TestInputGenerator:
         """Load and preprocess features using model-specific preprocessor."""
         preprocessor = self.config.preprocessor_class()
         features, labels = collect_features_and_labels(
-            self.generation_config, preprocessor, self.config.label_extractor
+            self.generation_config, preprocessor, self.config.label_extractor, self.config.data_loader
         )
         self.console.print(
             f"Loaded [bold]{features.shape[0]}[/] samples with feature shape [bold]{features.shape[1:]}[/]",
@@ -414,7 +421,7 @@ class LayerOutputGenerator:
         """Load and preprocess features."""
         preprocessor = self.config.preprocessor_class()
         features, labels = collect_features_and_labels(
-            self.generation_config, preprocessor, self.config.label_extractor
+            self.generation_config, preprocessor, self.config.label_extractor, self.config.data_loader
         )
         self.console.print(
             f"Loaded [bold]{features.shape[0]}[/] samples with feature shape [bold]{features.shape[1:]}[/]",
@@ -1609,20 +1616,31 @@ def prompt_layout_selection(console=None) -> str:
 
 
 def collect_features_and_labels(
-    layer_config: GenerationConfig, preprocessor: Any, label_extractor: LabelExtractor
+    layer_config: GenerationConfig, preprocessor: Any, label_extractor: LabelExtractor, custom_data_loader: Callable[[Path, int, int], List[dict]] | None = None
 ) -> Tuple[np.ndarray, List[str]]:
     """
-    Sample TFDS data using the provided config and return float features + labels.
+    Sample data using the provided config and return float features + labels.
 
     Args:
         layer_config: Generation configuration
         preprocessor: Domain-specific preprocessor instance
         label_extractor: Function to extract label from sample dict
+        custom_data_loader: Optional custom data loader for non-TFDS datasets
 
     Returns:
         Tuple of (features array, labels list)
     """
-    raw_samples: List[dict] = sample_tfds_dataset(layer_config)
+    if custom_data_loader is not None:
+        # Use custom data loader
+        raw_samples: List[dict] = custom_data_loader(
+            layer_config.dataset_dir,
+            layer_config.sample_count,
+            layer_config.random_seed
+        )
+    else:
+        # Use TFDS
+        raw_samples: List[dict] = sample_tfds_dataset(layer_config)
+
     labeled_features = extract_labeled_features(
         preprocessor.preprocess_sample,
         raw_samples,
