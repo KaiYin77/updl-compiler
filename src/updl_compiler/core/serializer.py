@@ -20,6 +20,7 @@ from .serialize_util import (
     write_string,
     write_tag,
     write_uint16,
+    write_int32,
     write_float32,
     write_shape,
     write_enum,
@@ -30,6 +31,7 @@ from .serialize_util import (
 import numpy as np
 import json
 from .license import MLPERF_APACHE_LICENSE_HEADER
+from .memory_optimizer import optimize_memory_for_graph
 
 def serialize_input_feature_to_c_array(
     quantized_samples: Sequence[np.ndarray],
@@ -313,7 +315,11 @@ def serialize_uph5_weight_to_json(fused_data, output_file):
 
 
 def serialize_uph5_to_binary(
-    fused_data, output_file, model_name="model", description="no_description"
+    fused_data,
+    output_file,
+    model_name="model",
+    description="no_description",
+    lifetime_log_path: str | None = None,
 ):
     """Step 6: Focus on serialization - serialize binary data from fused_data only
 
@@ -360,6 +366,21 @@ def serialize_uph5_to_binary(
         input_scale = input_data.get("scale")  # Default fallback
         write_float32(f, input_scale, debug=False)
 
+        # Generate optimal memory allocation (optionally logging lifetimes)
+        memory_metadata = optimize_memory_for_graph(layers_data, log_path=lifetime_log_path)
+
+        # Write memory allocation metadata
+        write_tag(f, "buffer_count", debug=False)
+        write_uint16(f, memory_metadata["buffer_count"], debug=False)
+
+        write_tag(f, "total_memory", debug=False)
+        write_int32(f, memory_metadata["total_memory_bytes"], debug=False)
+
+        # Write buffer specifications
+        for buffer_info in memory_metadata["buffers"]:
+            write_tag(f, "buffer_size", debug=False)
+            write_int32(f, buffer_info["size_bytes"], debug=False)
+
         # Write each fused layer
         for layer_idx, (layer_name, layer_data) in enumerate(layers_data.items()):
             layer_type = layer_data.get("layer_type", "Unknown")
@@ -379,15 +400,30 @@ def serialize_uph5_to_binary(
             write_string(f, stored_layer_type, debug=False)
             write_enum(f, stored_layer_type, LTYPE_LIST, debug=False)
 
-            # Write layer-specific data based on fused_data
-            _write_layer_data_from_fused(f, layer_data, layer_type, layer_idx, layers_data)
+            # Write layer-specific data based on fused_data (BEFORE graph metadata)
+            _write_layer_data_from_fused(f, layer_data, layer_type, layer_idx, layers_data, memory_metadata)
+
+            # Write graph execution metadata AFTER layer-specific data
+            write_tag(f, "buffer_id", debug=False)
+            layer_buffer_id = memory_metadata["layer_buffer_mapping"].get(layer_idx, 0)
+            write_uint16(f, layer_buffer_id, debug=False)
+
+            # Write dependency information
+            input_layers = layer_data.get("input_layer_indices", [layer_idx - 1] if layer_idx > 0 else [])
+            write_tag(f, "num_inputs", debug=False)
+            write_uint16(f, len(input_layers), debug=False)
+
+            if len(input_layers) > 1:  # Only write indices for multi-input layers
+                write_tag(f, "input_layers", debug=False)
+                for input_idx in input_layers:
+                    write_uint16(f, input_idx, debug=False)
 
     file_size = os.path.getsize(output_file)
     log_info(f"UPH5 binary file written: {file_size} bytes")
     return file_size
 
 
-def _write_layer_data_from_fused(f, layer_data, layer_type, layer_idx=0, all_layers=None):
+def _write_layer_data_from_fused(f, layer_data, layer_type, layer_idx=0, all_layers=None, memory_metadata=None):
     """Helper function to write layer-specific data from fused_data"""
     # Write shapes
     write_tag(f, "input_shape", debug=False)
@@ -649,7 +685,8 @@ def _write_layer_data_from_fused(f, layer_data, layer_type, layer_idx=0, all_lay
                      weight_scale=bias_scale, weight_zp=bias_zp)
 
 
-def serialize_uph5_to_c_array(fused_data, model_name, description="no_description", output_dir="./uph5"):
+def serialize_uph5_to_c_array(fused_data, model_name, description="no_description",
+                              output_dir="./uph5", cache_dir=None):
     """Step 6: Convert fused_data to C array format"""
     import tempfile
 
@@ -660,8 +697,13 @@ def serialize_uph5_to_c_array(fused_data, model_name, description="no_descriptio
 
     try:
         # Generate binary data from fused_data
+        lifetime_log_path = None
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+            lifetime_log_path = os.path.join(cache_dir, f"memory_lifetime_{model_name}.json")
+
         file_size = serialize_uph5_to_binary(
-            fused_data, tmp_path, model_name, description
+            fused_data, tmp_path, model_name, description, lifetime_log_path=lifetime_log_path
         )
 
         # Read the binary data

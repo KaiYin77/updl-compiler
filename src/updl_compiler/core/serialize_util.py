@@ -50,6 +50,8 @@ def write_tag(f, tag, debug=False):
 
 def write_uint16(f, value, debug=False):
     """Write a 2-byte unsigned integer"""
+    # Convert numpy types to native Python int
+    value = int(value)
     result = value.to_bytes(2, byteorder="little", signed=False)
     f.write(result)
     log_trace(f"uint16: {value} (pos: {f.tell() - 2})")
@@ -58,6 +60,8 @@ def write_uint16(f, value, debug=False):
 
 def write_int32(f, value, debug=False):
     """Write a 4-byte signed integer"""
+    # Convert numpy types to native Python int
+    value = int(value)
     result = value.to_bytes(4, byteorder="little", signed=True)
     f.write(result)
     log_trace(f"int32: {value} (pos: {f.tell() - 4})")
@@ -66,6 +70,8 @@ def write_int32(f, value, debug=False):
 
 def write_int16(f, value, debug=False):
     """Write a 2-byte signed integer"""
+    # Convert numpy types to native Python int
+    value = int(value)
     result = value.to_bytes(2, byteorder="little", signed=True)
     f.write(result)
     log_trace(f"int16: {value} (pos: {f.tell() - 2})")

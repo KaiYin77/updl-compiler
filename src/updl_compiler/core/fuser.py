@@ -273,10 +273,15 @@ def fuse_to_uph5_layer(model, fusion_groups):
     """
 
     fused_groups = {}
+    model_idx_to_fused_idx = {}
+    fused_order = []
 
     if not fusion_groups:
         log_debug("No fusion groups provided, returning empty fused groups")
         return fused_groups
+
+    # Build lookup from Keras layer object id to model index for quick dependency mapping
+    layer_obj_to_model_idx = {id(layer): idx for idx, layer in enumerate(model.layers)}
 
     for group_name, group_layers in fusion_groups.items():
         log_debug(f"Processing fusion group: {group_name}")
@@ -287,8 +292,11 @@ def fuse_to_uph5_layer(model, fusion_groups):
         primary_layer_info = None
         min_idx = float("inf")
 
+        group_model_indices = set()
         for layer_name, layer_info in group_layers.items():
             layer_idx = layer_info.get("layer_index", -1) + 1
+            if layer_idx >= 0:
+                group_model_indices.add(layer_idx)
             if layer_idx < min_idx:
                 min_idx = layer_idx
                 primary_layer_idx = layer_idx
@@ -472,11 +480,20 @@ def fuse_to_uph5_layer(model, fusion_groups):
             fused_layer["bias_scale"] = bias_scale
             fused_layer["bias_zp"] = bias_zp
 
+        fused_layer["_model_layer_index"] = primary_layer_idx
+        fused_layer["input_layer_indices"] = []
+
         fused_groups[group_name] = fused_layer
+        fused_order.append(group_name)
+
+        fused_idx = len(fused_order) - 1
+        for model_idx in group_model_indices:
+            model_idx_to_fused_idx[model_idx] = fused_idx
         log_info(
             f"Created fused layer for group {group_name}: {primary_layer_type} with {fused_layer['activation']} activation"
         )
 
+    _attach_graph_dependencies(model, fused_groups, fused_order, model_idx_to_fused_idx, layer_obj_to_model_idx)
     return fused_groups
 
 
@@ -491,6 +508,69 @@ def combine_fused_data_step5(fusable_data, fused_groups):
     log_debug(f"Fused layer names: {list(fused_data['layers'].keys())}")
 
     return fused_data
+
+
+def _attach_graph_dependencies(model, fused_groups, fused_order, model_idx_to_fused_idx, layer_obj_to_model_idx):
+    """Populate input_layer_indices for each fused layer using the original Keras graph."""
+    for order_idx, group_name in enumerate(fused_order):
+        fused_layer = fused_groups.get(group_name, {})
+        model_idx = fused_layer.pop("_model_layer_index", None)
+        if model_idx is None or model_idx >= len(model.layers):
+            continue
+
+        keras_layer = model.layers[model_idx]
+        inbound_layers = _collect_inbound_layers(keras_layer)
+
+        resolved_indices = []
+        seen = set()
+        for inbound_layer in inbound_layers:
+            if inbound_layer is None:
+                continue
+            if inbound_layer.__class__.__name__ == "InputLayer":
+                continue
+
+            inbound_model_idx = layer_obj_to_model_idx.get(id(inbound_layer))
+            if inbound_model_idx is None:
+                continue
+
+            fused_input_idx = model_idx_to_fused_idx.get(inbound_model_idx)
+            if fused_input_idx is None:
+                continue
+            if fused_input_idx == order_idx:
+                continue
+            if fused_input_idx in seen:
+                continue
+
+            seen.add(fused_input_idx)
+            resolved_indices.append(fused_input_idx)
+
+        fused_layer["input_layer_indices"] = resolved_indices
+
+
+def _collect_inbound_layers(layer):
+    """Collect inbound Keras layers feeding into the given layer."""
+    inbound = []
+    for node in getattr(layer, "_inbound_nodes", []):
+        node_layers = []
+
+        inbound_attr = getattr(node, "inbound_layers", None)
+        if inbound_attr is not None:
+            if isinstance(inbound_attr, (list, tuple)):
+                node_layers.extend(inbound_attr)
+            else:
+                node_layers.append(inbound_attr)
+        else:
+            input_tensors = getattr(node, "input_tensors", None)
+            if input_tensors is None:
+                continue
+            for tensor in input_tensors:
+                history = getattr(tensor, "_keras_history", None)
+                if history:
+                    node_layers.append(history[0])
+
+        inbound.extend(node_layers)
+
+    return inbound
 
 
 def main():

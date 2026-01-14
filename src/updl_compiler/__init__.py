@@ -111,7 +111,13 @@ def compile_model(
         # C Array - save to uph5 directory
         uph5_dir = os.path.join(output_dir, "uph5")
         os.makedirs(uph5_dir, exist_ok=True)
-        file_size = serialize_uph5_to_c_array(fused_data, model_name, description=description, output_dir=uph5_dir)
+        file_size = serialize_uph5_to_c_array(
+            fused_data,
+            model_name,
+            description=description,
+            output_dir=uph5_dir,
+            cache_dir=cache_dir,
+        )
 
         result = {
             "model_name": model_name,
