@@ -19,7 +19,9 @@ def test_core_imports():
     from updl_compiler.core import loader
     from updl_compiler.core import quantizer
     from updl_compiler.core import fuser
-    from updl_compiler.core import serializer
+    from updl_compiler.core import codegen
+    from updl_compiler.core import calibrator
+    from updl_compiler.core import memory_planner
     # If we get here without ImportError, the test passes
 
 def test_main_api():
