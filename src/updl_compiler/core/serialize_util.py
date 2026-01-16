@@ -28,7 +28,7 @@ def write_string(f, string, length=STRING_LENGTH, debug=False):
 
     # Ensure exactly the right length
     if len(result) != length:
-        log_error(f"Serializer: String padding failed for '{string_trimmed}' - expected {length} bytes but generated {len(result)} bytes. This indicates a binary format specification error.")
+        log_error(f"Codegen: String padding failed for '{string_trimmed}' - expected {length} bytes but generated {len(result)} bytes. This indicates a binary format specification error.")
         raise ValueError(f"Binary format error: string padding length mismatch")
 
     # Write to file
@@ -101,7 +101,7 @@ def write_shape(f, shape, dim_count=4, debug=False):
 def write_enum(f, string_value, enum_list, debug=False):
     """Write a type enum (lookup string in list)"""
     if string_value not in enum_list:
-        log_error(f"Serializer: Unknown layer type '{string_value}' encountered during serialization. Valid types are: {enum_list}. This indicates an unsupported layer type.")
+        log_error(f"Codegen: Unknown layer type '{string_value}' encountered during serialization. Valid types are: {enum_list}. This indicates an unsupported layer type.")
         enum_value = -1
     else:
         enum_value = enum_list.index(string_value)
@@ -255,6 +255,15 @@ def write_alignment_padding(f, alignment=ALIGNMENT_4_BYTE, debug=False):
 
     return padding_needed
 
+
+def quantize_tensor(values, scale, zero_point=0):
+    """Quantize floating-point tensor to int16 (legacy truncation behavior)."""
+    if scale == 0:
+        raise ValueError("Quantization scale must be non-zero.")
+
+    shifted = (values - zero_point) / scale
+    return shifted.astype(np.int16)
+
 def write_weights(
     f,
     weights,
@@ -281,7 +290,7 @@ def write_weights(
     log_debug(
         f"Using precomputed weight_scale: {weight_scale:.8f}, weight_zp: {weight_zp}"
     )
-    scaled_weights = ((weights - weight_zp) / weight_scale).astype(np.int16)
+    scaled_weights = quantize_tensor(weights, weight_scale, weight_zp if weight_zp is not None else 0)
 
     # Write shape dimension
     write_tag(f, "weight_shape_d", debug)

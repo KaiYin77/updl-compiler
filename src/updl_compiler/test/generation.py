@@ -11,7 +11,7 @@ scripts (e.g. keyword spotting, sound detection) can share the same workflow:
 2. Sample a dataset via TensorFlow Datasets.
 3. Run the project-specific preprocessor to obtain float32 feature tensors.
 4. Quantize features to int16 using the shared quantizer.
-5. Emit a C array via the compiler serializer helpers.
+5. Emit a C array via the compiler codegen helpers.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from rich.console import Console
 
 from ..core.quantization import QuantizationConfig
 from ..core.quantizer import quantize_input_data_fp32_to_int16
-from ..core.serializer import serialize_input_feature_to_c_array
+from ..core.codegen import serialize_input_feature_to_c_array
 from ..core.license import MLPERF_APACHE_LICENSE_HEADER
 
 

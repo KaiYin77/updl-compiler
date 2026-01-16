@@ -3,10 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Quantization Analysis for UPDL Models
+Calibration (quantization analysis) for UPDL Models.
 
-Analyzes models using representative datasets to determine optimal int16 quantization parameters.
-Supports pluggable preprocessors for different model types (KWS, VAD, etc.).
+Analyzes models using representative datasets to determine optimal int16 quantization
+parameters. Supports pluggable preprocessors for different model types (KWS, VAD, etc.).
 """
 
 import os
@@ -52,22 +52,32 @@ def create_model_layer_output(model):
     """Create a model that outputs all intermediate layer activations"""
     # Get all layers that produce meaningful outputs
     layer_outputs = []
-    layer_names = []
-    layer_types = []
+    layer_metadata = []
 
-    for layer in model.layers:
-        # Skip input layer and layers without meaningful outputs
-        if hasattr(layer, "output") and layer.name != "input_1":
-            try:
-                layer_outputs.append(layer.output)
-                layer_names.append(layer.name)
-                layer_types.append(layer.__class__.__name__)
-            except:
-                continue
+    for idx, layer in enumerate(model.layers):
+        # Skip input layers and layers without meaningful outputs
+        if not hasattr(layer, "output"):
+            continue
+        if layer.__class__.__name__ == "InputLayer":
+            continue
+        try:
+            layer_outputs.append(layer.output)
+            layer_metadata.append(
+                {
+                    "name": layer.name,
+                    "layer_type": layer.__class__.__name__,
+                    "model_index": idx,
+                }
+            )
+        except Exception:
+            continue
+
+    if not layer_outputs:
+        raise ValueError("Calibrator: Model does not expose intermediate outputs for analysis")
 
     # Create model that outputs all intermediate activations
     multi_output_model = tf.keras.Model(inputs=model.input, outputs=layer_outputs)
-    return multi_output_model, layer_names, layer_types
+    return multi_output_model, layer_metadata
 
 
 def extract_activation_function(layer):
@@ -81,8 +91,8 @@ def extract_activation_function(layer):
     return "linear"
 
 
-class QuantizationAnalyzer:
-    """Generic quantization analyzer with pluggable preprocessors"""
+class Calibrator:
+    """Generic quantization calibrator with pluggable preprocessors"""
 
     def __init__(self, preprocessor=None, batch_size=10):
         """
@@ -106,12 +116,12 @@ class QuantizationAnalyzer:
         Returns:
             dict: Quantization parameters
         """
-        log_info(f"Starting quantization analysis with {len(calibration_data)} calibration samples")
+        log_info(f"Calibrator: Starting analysis with {len(calibration_data)} calibration samples")
 
         # Create multi-output model for layer logging
-        multi_output_model, layer_names, layer_types = create_model_layer_output(model)
+        multi_output_model, layer_metadata = create_model_layer_output(model)
 
-        log_info(f"Analyzing {len(layer_names)} layers for quantization parameters...")
+        log_info(f"Calibrator: Analyzing {len(layer_metadata)} layers for quantization parameters...")
 
         # Initialize accumulator for layer statistics
         layer_stats = {}
@@ -127,7 +137,7 @@ class QuantizationAnalyzer:
 
             # Process batch samples
             batch_features = []
-            for sample in batch_samples:
+            for local_sample_idx, sample in enumerate(batch_samples):
                 try:
                     if self.preprocessor:
                         features = self.preprocessor.preprocess_sample(sample)
@@ -143,7 +153,11 @@ class QuantizationAnalyzer:
                     input_maxs.append(np.max(input_flat))
 
                 except Exception as e:
-                    log_error(f"Quantization Analyzer: Failed to preprocess calibration sample {sample_idx + 1} - {e}. This sample will be skipped.")
+                    global_sample_idx = start_idx + local_sample_idx
+                    log_error(
+                        f"Calibrator: Failed to preprocess calibration sample "
+                        f"{global_sample_idx + 1} - {e}. This sample will be skipped."
+                    )
                     continue
 
             if not batch_features:
@@ -156,13 +170,17 @@ class QuantizationAnalyzer:
 
                 # Accumulate layer statistics for each sample in the batch
                 for sample_idx in range(batch_tensor.shape[0]):  # For each sample in batch
-                    for layer_idx, (layer_name, layer_output) in enumerate(zip(layer_names, batch_layer_outputs)):
+                    for output_pos, (layer_info, layer_output) in enumerate(
+                        zip(layer_metadata, batch_layer_outputs)
+                    ):
+                        layer_name = layer_info["name"]
                         if layer_name not in layer_stats:
                             layer_stats[layer_name] = {
                                 'mins': [],
                                 'maxs': [],
-                                'layer_idx': layer_idx,
-                                'layer_type': layer_types[layer_idx]
+                                'output_index': output_pos,
+                                'layer_type': layer_info["layer_type"],
+                                'model_index': layer_info["model_index"],
                             }
 
                         # Collect min/max for this individual sample
@@ -172,10 +190,16 @@ class QuantizationAnalyzer:
                         layer_stats[layer_name]['maxs'].append(np.max(output_flat))
 
             except Exception as e:
-                log_error(f"Quantization Analyzer: Failed to run model inference on calibration batch {batch_idx + 1} - {e}. This batch will be skipped.")
+                log_error(f"Calibrator: Failed to run model inference on calibration batch {batch_idx + 1} - {e}. This batch will be skipped.")
                 continue
 
         # Calculate global input quantization parameters
+        if not input_mins:
+            raise ValueError(
+                "Calibrator: No valid calibration samples were processed. "
+                "Check preprocessing and dataset integrity."
+            )
+
         global_input_min = np.min(input_mins)
         global_input_max = np.max(input_maxs)
         input_scale, input_zp = calculate_symmetric_quantization_params(global_input_min, global_input_max, udl_mode)
@@ -219,7 +243,7 @@ class QuantizationAnalyzer:
 
             # Store parameters
             quantization_params["layers"][layer_name] = {
-                "layer_index": stats['layer_idx'],
+                "layer_index": stats['model_index'],
                 "layer_type": stats['layer_type'],
                 "activation": activation,
                 "scale": float(scale),
@@ -229,7 +253,10 @@ class QuantizationAnalyzer:
                 "range": float(global_max - global_min),
             }
 
-            log_debug(f"Layer {stats['layer_idx']}: {layer_name} ({stats['layer_type']}, {activation})")
+            log_debug(
+                f"Layer {stats['output_index']}: {layer_name} "
+                f"({stats['layer_type']}, {activation})"
+            )
             log_debug(f"  Global range: [{global_min:.6f}, {global_max:.6f}] (from {len(stats['mins'])} samples)")
             log_debug(f"  Scale: {scale:.8f}, Zero-point: {zero_point}")
 

@@ -38,14 +38,14 @@ from .fuser import (
     combine_fused_data_step5,
 )
 
-from .serializer import (
+from .codegen import (
     serialize_uph5_metadata_to_json,
     serialize_uph5_weight_to_json,
     serialize_uph5_to_c_array,
     serialize_input_feature_to_c_array,
 )
 
-from .quantization_analyzer import QuantizationAnalyzer
+from .calibrator import Calibrator
 
 from .quantization import (
     QuantizationConfig,
@@ -108,12 +108,12 @@ __all__ = [
     # Fuser
     "fuse_layers_from_json", "fuse_to_uph5_layer", "combine_fused_data_step5",
 
-    # Serializer
+    # Codegen
     "serialize_uph5_metadata_to_json", "serialize_uph5_weight_to_json",
     "serialize_uph5_to_c_array", "serialize_input_feature_to_c_array",
 
-    # Quantization
-    "QuantizationAnalyzer", "QuantizationConfig", "UDLQuantizer",
+    # Quantization / Calibration
+    "Calibrator", "QuantizationConfig", "UDLQuantizer",
     "calculate_symmetric_quantization_params", "calculate_udl_power_of_2_scale",
 
     # Preprocessors

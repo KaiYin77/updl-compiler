@@ -58,7 +58,7 @@ def apply_fusion_to_model(model, fusion_groups):
         # Match by layer type and position
         for layer_name, layer_info in group_layers.items():
             layer_type = layer_info.get("layer_type", "")
-            layer_index = layer_info.get("layer_index", -1) + 1
+            layer_index = layer_info.get("layer_index", -1)
 
             # Find the model layer at this index
             if 0 <= layer_index < len(model.layers):
@@ -294,7 +294,7 @@ def fuse_to_uph5_layer(model, fusion_groups):
 
         group_model_indices = set()
         for layer_name, layer_info in group_layers.items():
-            layer_idx = layer_info.get("layer_index", -1) + 1
+            layer_idx = layer_info.get("layer_index", -1)
             if layer_idx >= 0:
                 group_model_indices.add(layer_idx)
             if layer_idx < min_idx:
@@ -390,7 +390,7 @@ def fuse_to_uph5_layer(model, fusion_groups):
         activation_layer = None
 
         for layer_name, layer_info in group_layers.items():
-            layer_idx = layer_info.get("layer_index", -1) + 1
+            layer_idx = layer_info.get("layer_index", -1)
             layer_type = layer_info.get("layer_type", "")
 
             if layer_idx == primary_layer_idx:

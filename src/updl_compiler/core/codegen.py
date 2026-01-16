@@ -31,7 +31,7 @@ from .serialize_util import (
 import numpy as np
 import json
 from .license import MLPERF_APACHE_LICENSE_HEADER
-from .memory_optimizer import optimize_memory_for_graph
+from .memory_planner import optimize_memory_for_graph
 
 def serialize_input_feature_to_c_array(
     quantized_samples: Sequence[np.ndarray],
@@ -184,10 +184,9 @@ def serialize_uph5_metadata_to_json(fused_data, output_file):
     try:
         with open(output_file, "w") as f:
             json.dump(metadata, f, indent=2)
-        log_info(f"UPH5 metadata written to {output_file}")
         log_info(f"Metadata contains {len(metadata['layers'])} layer descriptions")
     except Exception as e:
-        log_error(f"Serializer: Cannot write UPH5 metadata to {output_file} - {e}. Check file permissions and disk space.")
+        log_error(f"Codegen: Cannot write UPH5 metadata to {output_file} - {e}. Check file permissions and disk space.")
         raise
 
 def serialize_uph5_weight_to_json(fused_data, output_file):
@@ -310,7 +309,7 @@ def serialize_uph5_weight_to_json(fused_data, output_file):
         with open(output_file, "w") as f:
             json.dump(weights_debug, f, indent=2)
     except Exception as e:
-        log_error(f"Serializer: Cannot write weights debug data to {output_file} - {e}. Check file permissions and disk space.")
+        log_error(f"Codegen: Cannot write weights debug data to {output_file} - {e}. Check file permissions and disk space.")
         raise
 
 

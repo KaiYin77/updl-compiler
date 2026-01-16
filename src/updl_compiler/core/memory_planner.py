@@ -43,7 +43,7 @@ class BufferAllocation:
             self.assigned_layers = []
 
 
-class MemoryOptimizer:
+class MemoryPlanner:
     """
     Static memory allocation optimizer using graph coloring algorithm.
 
@@ -352,7 +352,6 @@ class MemoryOptimizer:
             with open(log_path, "w") as fp:
                 json.dump(log_data, fp, indent=2, default=int)
 
-            log_info(f"Memory Optimizer: Lifetime log written to {log_path}")
         except Exception as exc:
             log_error(f"Memory Optimizer: Failed to write lifetime log ({exc})")
 
@@ -367,7 +366,7 @@ def optimize_memory_for_graph(layers_data: Dict, log_path: Optional[str] = None)
     Returns:
         Memory allocation metadata for runtime
     """
-    optimizer = MemoryOptimizer()
+    optimizer = MemoryPlanner()
 
     # Build graph from layers_data
     for layer_idx, (layer_name, layer_data) in enumerate(layers_data.items()):
